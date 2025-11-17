@@ -127,3 +127,39 @@ except TimeoutFetchError as err:
 
 これで「まずはURLにアクセスしてレスポンスを取得」するパーツが完成！  
 残りのUDP連携はこのパーツの上に組み立てていけばOK。
+
+---
+
+## 7. Step1: `remote_proxy/handler.py`
+
+* `AkariUdpServer` から渡された `IncomingRequest` を受け取り、`payload["url"]` を元に `fetch()` を実行。
+* レスポンス body を MTU (1180 byte) で分割し、先頭チャンクは `encode_response_first_chunk_py()`、後続は `encode_response_chunk_py()` に渡す。
+* エラーは例外種別ごとに AKARI-UDP の error packet へ変換。
+  * `InvalidURLError` → error_code=10 / HTTP 400
+  * `BodyTooLargeError` → error_code=11 / HTTP 502
+  * `TimeoutFetchError` → error_code=20 / HTTP 504
+  * その他の `FetchError` → error_code=30 / HTTP 502
+  * 想定外 → error_code=255 / HTTP 500
+* これで「URL取得ロジック → AKARI-UDP datagram」の橋渡しが完了する。
+
+---
+
+## 8. Step2: `remote_proxy/server.py`
+
+1. `serve_remote_proxy()` が `AkariUdpServer` を生成し、ハンドラ `handle_request` を登録。
+2. CLI から実行可能:
+
+    ```powershell
+    python -m akari.remote_proxy.server --host 0.0.0.0 --port 14500 --psk test-psk-0000-test
+    ```
+
+3. `--hex` で PSK を16進表現に切り替え、`--timeout` / `--buffer-size` / `--log-level` で運用設定を調整。
+4. ローカルプロキシが送った datagram を受け取り、即座に HTTP 取得→レスポンス化して送り返す。
+
+これで
+
+```
+ローカルHTTPクライアント →(AKARI-UDP)→ remote_proxy.server →(HTTP/HTTPS)→ Web
+```
+
+という通信路が一通り形になり、残るのはローカル側や統合テストのみ。
