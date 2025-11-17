@@ -1,0 +1,12 @@
+[package]
+name = "akari_udp_core"
+version = "0.1.0"
+edition = "2021"
+authors = ["akari-dev"]
+description = "Core Rust implementation of AKARI-UDP v1 packet encoding/decoding."
+license = "MIT"
+
+[dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "1.0"

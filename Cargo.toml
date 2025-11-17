@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/akari_udp_core",
+    "crates/akari_udp_py",
+]
+
+[workspace.metadata]
+# workspace-level metadata (if needed)
