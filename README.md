@@ -76,6 +76,23 @@ uv run --python 3.11 python -m akari.debug_tool --pretty
 
 デバッグスクリプトから生成した JSON は `akari_udp_py.decode_packet_py` の結果をそのまま再現するので、ヘッダ・ペイロード・HMAC などを目で追うのが簡単になります。差分と hex ダンプを併用すれば、「生成前の構造」と「復元後の構造」のギャップを素早く見つけられます。
 
+## UDP デモスクリプト
+
+ローカル／外部プロキシ相当の処理を `scripts/demo_udp.py` で手早く確認できます。外部プロキシ（`AkariUdpServer`）は着信 URL に応じて HTTP 正常応答またはエラー応答を生成し、ローカルプロキシ（`AkariUdpClient`）役が UDP 経由で受信しながらレスポンスボディとパケット列を表示します。PSK を `--psk`/`--hex` で切り替えたり、`--url` を複数回指定して順に送信したりでき、URL に `--error-keyword` 文字列が含まれるとエラー応答が返ってきます。
+
+```powershell
+set PYTHONPATH=%CD%\py
+uv run --python 3.11 python scripts/demo_udp.py
+```
+
+ホストやポート、タイムアウトは `--host`/`--port`/`--timeout` でも指定できます。たとえば以下のように 2 件の URL を送信し、1 つ目を正常、2 つ目をエラーにする構成で挙動を確認することができます。
+
+```powershell
+uv run --python 3.11 python scripts/demo_udp.py --url https://example.com/ping --url https://example.com/error --error-keyword error
+```
+
+出力には `[server]` の受信ログや、`ResponseOutcome` の JSON、受信パケットの詳細が含まれ、問題なく送受信できているかを目で追えます。`--port 0` を指定すると OS が空いているポートを選ぶため、複数インスタンスを並行実行する際に便利です。
+
 ## 今後の連携
 
 - `py/akari/udp_codec.py` の `akari-udp-dump` CLI は STDIN からバイナリを受け取って JSON または `debug_dump` テキストを出します（`--debug`/`--pretty` 付き）。パイプやファイルから直接使って確認できます。  
