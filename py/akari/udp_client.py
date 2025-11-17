@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from akari_udp_py import decode_packet_py, encode_request_py
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _to_native(value: Any) -> Any:
@@ -62,6 +65,8 @@ class ResponseOutcome:
     error: Mapping[str, Any] | None
     complete: bool
     timed_out: bool
+    bytes_sent: int
+    bytes_received: int
 
 
 class AkariUdpClient:
@@ -90,14 +95,16 @@ class AkariUdpClient:
         accumulator = ResponseAccumulator(message_id)
         error_payload: Mapping[str, Any] | None = None
         timed_out = False
+        bytes_sent = len(datagram)
+        bytes_received = 0
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(self._timeout)
             sock.sendto(datagram, self._remote_addr)
-            start = time.monotonic()
+            last_received = time.monotonic()
 
             while True:
-                remaining = self._timeout - (time.monotonic() - start)
+                remaining = self._timeout - (time.monotonic() - last_received)
                 if remaining <= 0:
                     timed_out = True
                     break
@@ -108,9 +115,22 @@ class AkariUdpClient:
                     timed_out = True
                     break
 
+                bytes_received += len(data)
                 parsed = decode_packet_py(data, self._psk)
                 native = _to_native(parsed)
                 packets.append(native)
+                last_received = time.monotonic()
+                payload = parsed.get("payload", {})
+                chunk = payload.get("chunk")
+                chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
+                LOGGER.info(
+                    "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
+                    parsed.get("type"),
+                    parsed.get("header", {}).get("message_id"),
+                    payload.get("seq"),
+                    payload.get("seq_total"),
+                    chunk_len,
+                )
 
                 packet_type = parsed["type"]
                 if packet_type == "resp":
@@ -130,4 +150,6 @@ class AkariUdpClient:
             error=error_payload,
             complete=accumulator.complete,
             timed_out=timed_out,
+            bytes_sent=bytes_sent,
+            bytes_received=bytes_received,
         )

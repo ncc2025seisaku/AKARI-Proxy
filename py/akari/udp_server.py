@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
@@ -11,6 +12,8 @@ from akari_udp_py import (
     encode_error_py,
     encode_response_first_chunk_py,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,7 +72,21 @@ class AkariUdpServer:
         )
 
         for datagram in self._handler(request):
-            self._sock.sendto(bytes(datagram), client_addr)
+            datagram_bytes = bytes(datagram)
+            try:
+                parsed = decode_packet_py(datagram_bytes, self._psk)
+                payload = parsed.get("payload", {})
+                LOGGER.info(
+                    "send packet type=%s seq=%s/%s len=%d to=%s",
+                    parsed.get("type"),
+                    payload.get("seq"),
+                    payload.get("seq_total"),
+                    len(datagram_bytes),
+                    client_addr,
+                )
+            except Exception:
+                LOGGER.exception("failed to decode response packet for logging")
+            self._sock.sendto(datagram_bytes, client_addr)
 
         return request
 

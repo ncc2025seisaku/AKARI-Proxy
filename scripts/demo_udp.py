@@ -128,6 +128,8 @@ class DemoRunner:
             "body_length": len(outcome.body) if outcome.body else 0,
             "error": outcome.error,
             "packet_count": len(outcome.packets),
+            "bytes_sent": outcome.bytes_sent,
+            "bytes_received": outcome.bytes_received,
         }
         print(f"\n[client] {url}")
         print(json.dumps(normalize_object(summary), ensure_ascii=False, indent=2))

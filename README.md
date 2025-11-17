@@ -19,9 +19,10 @@
    `uv add` でツール類を `.venv` に追加すると手順が簡潔です。
 
    ```powershell
-   uv add pip setuptools maturin
+   uv add pip setuptools
+   pip install maturin
    cd crates/akari_udp_py
-   maturin develop
+   python -m maturin develop
    cd ../../
    ```
 
