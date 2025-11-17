@@ -5,6 +5,7 @@ use akari_udp_core::{
     encode_response_chunk,
     encode_response_first_chunk,
     AkariError,
+    debug_dump,
     Header,
     MessageType,
     Payload,
@@ -137,6 +138,11 @@ fn decode_packet_py<'py>(py: Python<'py>, datagram: &'py [u8], psk: &'py [u8]) -
     Ok(result)
 }
 
+#[pyfunction]
+fn debug_dump_py(datagram: &[u8], psk: &[u8]) -> PyResult<String> {
+    debug_dump(datagram, psk).map_err(map_error)
+}
+
 #[pymodule]
 fn akari_udp_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_request_py, m)?)?;
@@ -144,6 +150,7 @@ fn akari_udp_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_response_chunk_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_error_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_packet_py, m)?)?;
+    m.add_function(wrap_pyfunction!(debug_dump_py, m)?)?;
     Ok(())
 }
 
@@ -183,6 +190,16 @@ mod tests {
             mutated[last] ^= 0x01;
             let err = decode_packet_py(py, &mutated, PSK);
             assert!(err.is_err());
+        });
+    }
+
+    #[test]
+    fn python_debug_dump_returns_text() {
+        Python::with_gil(|py| {
+            let datagram = encode_request_py(py, "https://example.xyz", 0x11, 0x22, PSK).unwrap();
+            let dump = debug_dump_py(datagram.as_bytes(py), PSK).unwrap();
+            assert!(dump.contains("AKARI-UDP Packet Debug"));
+            assert!(dump.contains("Request"));
         });
     }
 }
