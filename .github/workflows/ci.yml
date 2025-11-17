@@ -25,15 +25,26 @@ jobs:
         with:
           python-version: 3.11
 
+      - name: Create Python virtualenv
+        run: python -m venv .venv
+
       - name: Install Python tooling
-        run: python -m pip install --upgrade pip setuptools maturin pytest
+        run: |
+          source .venv/bin/activate
+          python -m pip install --upgrade pip setuptools maturin pytest
 
       - name: Run cargo tests
-        run: cargo test --workspace
+        run: |
+          source .venv/bin/activate
+          cargo test --workspace
 
       - name: Build Python bindings
         working-directory: crates/akari_udp_py
-        run: maturin develop --release
+        run: |
+          source ../../.venv/bin/activate
+          maturin develop --release
 
       - name: Run Python unit tests
-        run: python -m pytest tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests
