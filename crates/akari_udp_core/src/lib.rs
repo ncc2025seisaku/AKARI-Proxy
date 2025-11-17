@@ -1,4 +1,5 @@
 mod decode;
+mod debug;
 mod encode;
 mod error;
 mod header;
@@ -6,6 +7,7 @@ mod hmac;
 mod payload;
 
 pub use crate::decode::decode_packet;
+pub use crate::debug::debug_dump;
 pub use crate::encode::{encode_error, encode_request, encode_response_chunk, encode_response_first_chunk};
 pub use crate::error::AkariError;
 pub use crate::header::{Header, MessageType};

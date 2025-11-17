@@ -3,6 +3,8 @@ use crate::hmac::{compute_tag, TAG_LEN};
 use crate::header::{Header, HEADER_LEN, MessageType};
 use crate::payload::{ErrorPayload, Payload, ParsedPacket, RequestPayload, ResponseChunk};
 use std::convert::TryInto;
+#[cfg(feature = "debug-log")]
+use tracing::debug;
 
 const REQUEST_OVERHEAD: usize = 4;
 const RESPONSE_FIRST_OVERHEAD: usize = 8;
@@ -17,6 +19,16 @@ pub fn decode_packet(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacket, AkariE
     }
 
     let header = Header::from_bytes(&datagram[..HEADER_LEN])?;
+    #[cfg(feature = "debug-log")]
+    debug!(
+        "decode_packet type={:?} message_id={} seq={}/{} payload_len={} total_len={}",
+        header.message_type,
+        header.message_id,
+        header.seq,
+        header.seq_total,
+        header.payload_len,
+        datagram.len()
+    );
     let payload_len = header.payload_len as usize;
     let expected_len = HEADER_LEN + payload_len + TAG_LEN;
     if datagram.len() != expected_len {

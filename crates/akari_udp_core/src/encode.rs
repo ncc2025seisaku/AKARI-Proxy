@@ -1,6 +1,8 @@
 use crate::error::AkariError;
 use crate::hmac::{compute_tag, TAG_LEN};
 use crate::header::{Header, MessageType, CURRENT_VERSION, HEADER_LEN};
+#[cfg(feature = "debug-log")]
+use tracing::debug;
 const MAX_PAYLOAD: usize = u16::MAX as usize;
 const REQUEST_OVERHEAD: usize = 4;
 const RESPONSE_FIRST_OVERHEAD: usize = 8;
@@ -13,6 +15,12 @@ fn finalize_packet(header: &Header, payload: &[u8], psk: &[u8]) -> Result<Vec<u8
             actual: payload.len(),
         });
     }
+
+    #[cfg(feature = "debug-log")]
+    debug!(
+        "finalize_packet type={:?} message_id={} seq={}/{} payload_len={}",
+        header.message_type, header.message_id, header.seq, header.seq_total, header.payload_len
+    );
 
     let mut buffer = Vec::with_capacity(HEADER_LEN + payload.len() + TAG_LEN);
     buffer.extend_from_slice(&header.to_bytes());
@@ -36,6 +44,9 @@ pub fn encode_request(
     timestamp: u32,
     psk: &[u8],
 ) -> Result<Vec<u8>, AkariError> {
+    #[cfg(feature = "debug-log")]
+    debug!("encode_request url={} message_id={} timestamp={}", url, message_id, timestamp);
+
     let url_bytes = url.as_bytes();
     let payload_len = ensure_payload_size(REQUEST_OVERHEAD + url_bytes.len())?;
     let header = Header {
@@ -68,6 +79,17 @@ pub fn encode_response_first_chunk(
     timestamp: u32,
     psk: &[u8],
 ) -> Result<Vec<u8>, AkariError> {
+    #[cfg(feature = "debug-log")]
+    debug!(
+        "encode_response_first_chunk status={} body_len={} chunk_len={} message_id={} seq_total={} timestamp={}",
+        status_code,
+        body_len,
+        body_chunk.len(),
+        message_id,
+        seq_total,
+        timestamp
+    );
+
     let payload_len = ensure_payload_size(RESPONSE_FIRST_OVERHEAD + body_chunk.len())?;
     let header = Header {
         version: CURRENT_VERSION,
@@ -98,6 +120,16 @@ pub fn encode_response_chunk(
     timestamp: u32,
     psk: &[u8],
 ) -> Result<Vec<u8>, AkariError> {
+    #[cfg(feature = "debug-log")]
+    debug!(
+        "encode_response_chunk chunk_len={} message_id={} seq={}/{} timestamp={}",
+        body_chunk.len(),
+        message_id,
+        seq,
+        seq_total,
+        timestamp
+    );
+
     let payload_len = ensure_payload_size(body_chunk.len())?;
     let header = Header {
         version: CURRENT_VERSION,
@@ -122,6 +154,16 @@ pub fn encode_error(
     timestamp: u32,
     psk: &[u8],
 ) -> Result<Vec<u8>, AkariError> {
+    #[cfg(feature = "debug-log")]
+    debug!(
+        "encode_error code={} http_status={} msg_len={} message_id={} timestamp={}",
+        error_code,
+        http_status,
+        message.len(),
+        message_id,
+        timestamp
+    );
+
     let msg_bytes = message.as_bytes();
     let payload_len = ensure_payload_size(ERROR_OVERHEAD + msg_bytes.len())?;
     let header = Header {

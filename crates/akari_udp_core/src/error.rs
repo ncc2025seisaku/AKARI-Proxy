@@ -18,6 +18,8 @@ pub enum AkariError {
     InvalidUrlLength { declared: usize, available: usize },
     #[error("invalid UTF-8 in payload: {0}")]
     InvalidUtf8(#[from] std::str::Utf8Error),
+    #[error("format error: {0}")]
+    Fmt(#[from] std::fmt::Error),
     #[error("HMAC mismatch")]
     HmacMismatch,
     #[error("invalid PSK")]

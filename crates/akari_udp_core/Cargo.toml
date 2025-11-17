@@ -10,3 +10,10 @@ license = "MIT"
 hmac = "0.12"
 sha2 = "0.10"
 thiserror = "1.0"
+tracing = { version = "0.1", optional = true }
+hex = "0.4"
+
+[features]
+default = []
+# 有効化すると encode/decode の詳細ログを tracing 経由で出力
+debug-log = ["tracing"]
