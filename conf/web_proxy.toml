@@ -1,0 +1,12 @@
+# AKARI Web Proxy 設定 (スタブ)
+# - listen_host / listen_port: ブラウザが接続するHTTPサーバ
+# - mode: reverse or web (仕様書 3.1 参照)
+
+[proxy]
+listen_host = "127.0.0.1"
+listen_port = 8080
+mode = "web"
+
+[ui]
+portal_title = "AKARI Web Proxy"
+welcome_message = "AKARI Web Proxy へようこそ"
