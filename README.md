@@ -77,6 +77,16 @@ uv run --python 3.11 python -m akari.debug_tool --pretty
 
 デバッグスクリプトから生成した JSON は `akari_udp_py.decode_packet_py` の結果をそのまま再現するので、ヘッダ・ペイロード・HMAC などを目で追うのが簡単になります。差分と hex ダンプを併用すれば、「生成前の構造」と「復元後の構造」のギャップを素早く見つけられます。
 
+## Web プロキシ検索画面
+
+`py/akari/web_proxy/static/index.html` はローカルプロキシの Web プロキシモードで表示されるトップページを想定した、検索用 UI です。フォームでは「URL をそのまま開く」か「検索クエリから Google 検索を開く」かを切り替えられ、検索モードを選ぶと `https://www.google.com/search?q=` にエンコード済みクエリを付加した URL を開きます。新しいタブまたは同タブで開くボタンを使えば即座にアクセスできます。
+
+ローカルプロキシ設定パネルで `Host`/`Port` を入力すると `http_proxy`/`https_proxy` の文字列がリアルタイムに更新され、コピーしてブラウザや OS のプロキシ設定に貼り付けることができます。設定値はブラウザの `localStorage` に保存されるのでリロードしても維持されます。
+
+ロゴ画像は `py/akari/web_proxy/static/logo.png` に収納します。正方形（例: 96×96px）の PNG/JPEG で置き換えるとページ上部のロゴに反映されます。
+
+静的ファイルは Python の組み込み HTTP サーバーで配信できます。`.venv` をアクティベートし、`PYTHONPATH` に `py` を通した状態で例えば `uv run --python 3.11 python -m akari.web_proxy.server --host 127.0.0.1 --port 8000` を実行すると、`http://127.0.0.1:8000/` で検索画面が開きます。
+
 ## UDP デモスクリプト
 
 ローカル／外部プロキシ相当の処理を `scripts/demo_udp.py` で手早く確認できます。外部プロキシ（`AkariUdpServer`）は着信 URL に応じて HTTP 正常応答またはエラー応答を生成し、ローカルプロキシ（`AkariUdpClient`）役が UDP 経由で受信しながらレスポンスボディとパケット列を表示します。PSK を `--psk`/`--hex` で切り替えたり、`--url` を複数回指定して順に送信したりでき、URL に `--error-keyword` 文字列が含まれるとエラー応答が返ってきます。
