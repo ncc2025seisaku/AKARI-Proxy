@@ -146,8 +146,8 @@ def main() -> None:
     print("bytes sent:", result.bytes_sent)
     print("bytes received:", result.bytes_received)
     print("total bytes (send + recv):", result.bytes_sent + result.bytes_received)
-    if result.body is not None:
-        print("body:", result.body)
+    # if result.body is not None:
+    #     print("body:", result.body)
     print("received packets:", len(result.packets))
     if result.packets:
         print("--- packet dump ---")
@@ -167,7 +167,7 @@ def main() -> None:
         if http_stats.error:
             print("HTTP compare failed:", http_stats.error)
         else:
-            print("HTTP status:", http_stats.status_code, http_stats.reason)
+            print("HTTP status:", http_stats.status_code, ttp_stats.reason)
             print("HTTP headers:", http_stats.header_bytes)
             print("HTTP body bytes:", http_stats.body_bytes)
             print("HTTP total bytes (headers + body):", http_stats.total_bytes)

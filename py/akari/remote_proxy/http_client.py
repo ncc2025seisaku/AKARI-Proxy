@@ -14,6 +14,7 @@ from urllib import error, parse, request
 DEFAULT_TIMEOUT = 5.0
 MAX_BODY_BYTES = 1_000_000
 USER_AGENT = "AKARI-Proxy/0.1"
+ACCEPT_ENCODING = "br, gzip, deflate"
 
 
 class HttpResponse(TypedDict):
@@ -80,7 +81,10 @@ def fetch(
     req = request.Request(
         normalized_url,
         method="GET",
-        headers={"User-Agent": USER_AGENT},
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept-Encoding": ACCEPT_ENCODING,
+        },
     )
 
     try:
