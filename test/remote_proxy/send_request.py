@@ -167,7 +167,7 @@ def main() -> None:
         if http_stats.error:
             print("HTTP compare failed:", http_stats.error)
         else:
-            print("HTTP status:", http_stats.status_code, ttp_stats.reason)
+            print("HTTP status:", http_stats.status_code, http_stats.reason)
             print("HTTP headers:", http_stats.header_bytes)
             print("HTTP body bytes:", http_stats.body_bytes)
             print("HTTP total bytes (headers + body):", http_stats.total_bytes)
