@@ -1,0 +1,9 @@
+# AKARI Local Proxy configuration (system settings only)
+
+[content_filter]
+# JavaScript requests are allowed when true.
+enable_js = true
+# Stylesheet requests are allowed when true.
+enable_css = false
+# Image requests are allowed when true.
+enable_img = true
