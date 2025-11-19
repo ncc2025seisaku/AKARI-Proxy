@@ -104,6 +104,18 @@ uv run --python 3.11 python scripts/demo_udp.py --url https://example.com/ping -
 
 出力には `[server]` の受信ログや、`ResponseOutcome` の JSON、受信パケットの詳細が含まれ、問題なく送受信できているかを目で追えます。`--port 0` を指定すると OS が空いているポートを選ぶため、複数インスタンスを並行実行する際に便利です。
 
+## リモートプロキシ（本番）
+
+本番環境では `conf/remote.toml` から設定を読み、`scripts/run_remote_proxy.py` で起動します。
+`server.psk` / `server.psk_file` / `server.psk_env` のいずれかで PSK を指定し、`psk_hex = true` を使うと 16 進文字列からバイト列を復号できます。
+
+```powershell
+set PYTHONPATH=%CD%\py
+uv run --python 3.11 python scripts/run_remote_proxy.py --config conf/remote.toml
+```
+
+PSK をファイルや環境変数で管理する場合はアクセス権を厳格にし、値が漏れないようにしてください。
+
 ## 今後の連携
 
 - `py/akari/udp_codec.py` の `akari-udp-dump` CLI は STDIN からバイナリを受け取って JSON または `debug_dump` テキストを出します（`--debug`/`--pretty` 付き）。パイプやファイルから直接使って確認できます。  

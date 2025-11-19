@@ -1,5 +1,7 @@
 """リモートプロキシ側のユーティリティをまとめるパッケージ。"""
 
+from .config import ConfigError, RemoteProxyConfig, load_config
+from .handler import handle_request
 from .http_client import (
     BodyTooLargeError,
     FetchError,
@@ -8,10 +10,13 @@ from .http_client import (
     TimeoutFetchError,
     fetch,
 )
-from .handler import handle_request
+from .main import main, run
 from .server import serve_remote_proxy
 
 __all__ = [
+    "ConfigError",
+    "RemoteProxyConfig",
+    "load_config",
     "FetchError",
     "InvalidURLError",
     "BodyTooLargeError",
@@ -20,4 +25,6 @@ __all__ = [
     "fetch",
     "handle_request",
     "serve_remote_proxy",
+    "main",
+    "run",
 ]

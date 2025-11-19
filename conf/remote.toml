@@ -1,0 +1,17 @@
+# AKARI Remote Proxy production configuration
+# - `server.psk` / `server.psk_file` / `server.psk_env` のいずれかを指定
+# - `psk_hex` を true にすると PSK を 16 進文字列として解釈する
+[server]
+host = "0.0.0.0"
+port = 14500
+timeout = 5.0
+buffer_size = 65535
+log_level = "INFO"
+
+# プレーンテキスト PSK（テスト用）
+psk = "test-psk-0000-test"
+
+# ちなみにファイルから読込む場合は以下のようにする
+# psk_file = "secrets/remote_psk.txt"
+# 環境変数から読み込みたい場合は、psk_env を使う
+# psk_env = "AKARI_REMOTE_PSK"
