@@ -10,3 +10,10 @@ mode = "web"
 [ui]
 portal_title = "AKARI Web Proxy"
 welcome_message = "AKARI Web Proxy へようこそ"
+
+[remote]
+host = "127.0.0.1"
+port = 9000
+psk = "test-psk-0000-test"
+psk_hex = false
+timeout = 2.0

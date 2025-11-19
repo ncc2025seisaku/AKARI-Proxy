@@ -24,7 +24,7 @@ def parse_psk(value: str, *, hex_mode: bool) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run AKARI remote proxy server for testing")
     parser.add_argument("--host", default="0.0.0.0", help="bind host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=14500, help="bind port (default: 14500)")
+    parser.add_argument("--port", type=int, default=9000, help="bind port (default: 9000)")
     parser.add_argument("--psk", default="test-psk-0000-test", help="pre-shared key (plain text)")
     parser.add_argument("--hex", action="store_true", help="interpret --psk as hex string")
     parser.add_argument("--timeout", type=float, help="socket timeout for recvfrom")
