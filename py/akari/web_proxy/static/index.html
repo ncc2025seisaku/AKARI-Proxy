@@ -40,11 +40,25 @@
         background-position: center;
         background-repeat: no-repeat;
         background-size: contain;
-        opacity: 0.24;
-        filter: blur(1.5px);
+        opacity: 0.3;
+        filter: blur(1.5px) brightness(1.25);
+        mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0) 72%);
+        mask-mode: alpha;
         transform: translateY(-2%);
         pointer-events: none;
         transition: filter 0.25s ease, opacity 0.25s ease;
+        z-index: -2;
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at center, rgba(10, 10, 10, 0) 40%, rgba(10, 10, 10, 0.35) 70%, rgba(10, 10, 10, 0.75) 90%, rgba(10, 10, 10, 0.95) 95%, rgba(10, 10, 10, 0) 100%),
+          radial-gradient(circle, rgba(10, 10, 10, 0.15), rgba(10, 10, 10, 0));
+        mix-blend-mode: soft-light;
         z-index: -1;
       }
 
@@ -206,14 +220,14 @@
   <body>
     <main>
       <div id="searchPanel" class="liquid-glass">
-        <label class="sr-only" for="query">URL を入力してください</label>
+        <label class="sr-only" for="query"></label>
         <div class="input-area">
           <canvas id="glassCanvas"></canvas>
           <input
             id="query"
             name="query"
             type="text"
-            placeholder="URL を入力してください"
+            placeholder=""
             autocomplete="off"
           />
           <button id="submitSearch" type="button">OPEN</button>
