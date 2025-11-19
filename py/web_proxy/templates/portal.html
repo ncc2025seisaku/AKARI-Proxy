@@ -49,6 +49,12 @@
         cursor: pointer;
       }
 
+      .hint {
+        margin-top: 0.75rem;
+        color: #475569;
+        font-size: 0.9rem;
+      }
+
       .alert {
         margin-top: 1rem;
         padding: 0.75rem 1rem;
@@ -94,8 +100,9 @@
           value="{{ url_value }}"
           autocomplete="off"
         />
-        <button type="submit">Fetch</button>
+        <button type="submit">AKARI Fetch</button>
       </form>
+      <p class="hint">入力した URL を AKARI-UDP 経由で取得し、レスポンス本文をプレビューします。</p>
       {{ result_section }}
     </main>
   </body>

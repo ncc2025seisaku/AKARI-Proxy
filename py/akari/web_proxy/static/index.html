@@ -200,6 +200,7 @@
           width: 100%;
           padding: 0.55rem 0;
         }
+
       }
     </style>
   </head>
@@ -295,25 +296,31 @@
       queryInput.addEventListener("input", updateFocusState);
       updateFocusState();
 
-      const openQuery = () => {
+      const normalizeUrl = (text) => {
+        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text)) {
+          return text;
+        }
+        if (text.includes(".")) {
+          return `https://${text}`;
+        }
+        return text;
+      };
+
+      const openProxy = () => {
         const text = queryInput.value.trim();
         if (!text) {
           queryInput.focus();
           return;
         }
-        const target = "_self";
-        const isUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text);
-        const url = isUrl
-          ? text
-          : `https://www.google.com/search?q=${encodeURIComponent(text)}`;
-        window.open(url, target);
+        const normalized = normalizeUrl(text);
+        window.location.href = `/${normalized}`;
       };
 
-      searchButton.addEventListener("click", openQuery);
+      searchButton.addEventListener("click", openProxy);
       queryInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
-          openQuery();
+          openProxy();
         }
       });
 
