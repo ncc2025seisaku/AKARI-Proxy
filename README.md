@@ -77,15 +77,11 @@ uv run --python 3.11 python -m akari.debug_tool --pretty
 
 デバッグスクリプトから生成した JSON は `akari_udp_py.decode_packet_py` の結果をそのまま再現するので、ヘッダ・ペイロード・HMAC などを目で追うのが簡単になります。差分と hex ダンプを併用すれば、「生成前の構造」と「復元後の構造」のギャップを素早く見つけられます。
 
-## Web プロキシ検索画面
+## Web プロキシ UI
 
-`py/akari/web_proxy/static/index.html` はローカルプロキシの Web プロキシモードで表示されるトップページを想定した、検索用 UI です。フォームでは「URL をそのまま開く」か「検索クエリから Google 検索を開く」かを切り替えられ、検索モードを選ぶと `https://www.google.com/search?q=` にエンコード済みクエリを付加した URL を開きます。新しいタブまたは同タブで開くボタンを使えば即座にアクセスできます。
+`scripts/run_web_proxy.py` は AKARI-UDP を使って外部プロキシへ URL の取得を依頼し、その生データをそのままブラウザに返すローカル Web プロキシを提供します。`conf/web_proxy.toml` の `[remote]` で UDP 先ホスト/ポート・PSK（文字列または 16 進）・タイムアウトを設定してください。
 
-ローカルプロキシ設定パネルで `Host`/`Port` を入力すると `http_proxy`/`https_proxy` の文字列がリアルタイムに更新され、コピーしてブラウザや OS のプロキシ設定に貼り付けることができます。設定値はブラウザの `localStorage` に保存されるのでリロードしても維持されます。
-
-ロゴ画像は `py/akari/web_proxy/static/logo.png` に収納します。正方形（例: 96×96px）の PNG/JPEG で置き換えるとページ上部のロゴに反映されます。
-
-静的ファイルは Python の組み込み HTTP サーバーで配信できます。`.venv` をアクティベートし、`PYTHONPATH` に `py` を通した状態で例えば `uv run --python 3.11 python -m akari.web_proxy.server --host 127.0.0.1 --port 8000` を実行すると、`http://127.0.0.1:8000/` で検索画面が開きます。
+`http://<listen_host>:<listen_port>/` を開くと `py/akari/web_proxy/static/index.html` の検索 UI が表示されます。URL を入力して「OPEN」を押すと `http://<listen_host>:<listen_port>/<URL>` へ遷移し、AKARI-UDP を経由して取得したレスポンス本文がそのままブラウザに表示されます（`X-AKARI-*` ヘッダーで message_id や送受信バイト数を付与）。クエリや POST から `/proxy` を直接叩いても同じく生データが返り、JSON ではなく本来の HTTP ボディを確認できるため、ブラウザでの疎通チェックにそのまま利用できます。静的アセット（`logo.png` など）は `py/akari/web_proxy/static` 配下から配信されます。
 
 ## UDP デモスクリプト
 
