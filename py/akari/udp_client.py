@@ -8,7 +8,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence, Tuple
 
-from akari_udp_py import decode_packet_py, encode_request_py, encode_request_v2_py
+from akari_udp_py import (
+    decode_packet_py,
+    encode_ack_v2_py,
+    encode_nack_v2_py,
+    encode_request_py,
+    encode_request_v2_py,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -180,9 +186,18 @@ class AkariUdpClient:
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
 
+            nack_sent = False
             while True:
                 remaining = self._timeout - (time.monotonic() - last_received)
                 if remaining <= 0:
+                    if self._version >= 2 and accumulator.seq_total and not accumulator.complete and not nack_sent:
+                        missing_bitmap = self._build_missing_bitmap(accumulator)
+                        if missing_bitmap:
+                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            sock.sendto(nack, self._remote_addr)
+                            nack_sent = True
+                            last_received = time.monotonic()
+                            continue
                     timed_out = True
                     break
                 sock.settimeout(remaining)
@@ -231,3 +246,18 @@ class AkariUdpClient:
             bytes_sent=bytes_sent,
             bytes_received=bytes_received,
         )
+
+    def _build_missing_bitmap(self, acc: ResponseAccumulator) -> bytes:
+        if acc.seq_total is None:
+            return b""
+        missing = [i for i in range(acc.seq_total) if i not in acc.chunks]
+        if not missing:
+            return b""
+        max_seq = max(missing)
+        length = (max_seq // 8) + 1
+        bitmap = bytearray(length)
+        for seq in missing:
+            idx = seq // 8
+            bit = seq % 8
+            bitmap[idx] |= 1 << bit
+        return bytes(bitmap)

@@ -39,6 +39,10 @@ ERROR_UPSTREAM_FAILURE = 30
 ERROR_UNEXPECTED = 255
 ERROR_UNSUPPORTED_PACKET = 254
 
+# 簡易キャッシュ: message_id -> (timestamp, [datagrams])
+RESP_CACHE_TTL = 5.0
+RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
+
 
 def _now_timestamp() -> int:
     return int(time.time())
@@ -163,6 +167,9 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                 )
             )
 
+    # キャッシュして再送に備える
+    RESP_CACHE[message_id] = (time.time(), datagrams)
+    _purge_cache()
     return datagrams
 
 
@@ -204,8 +211,47 @@ def _encode_error(
     return (datagram,)
 
 
+def _handle_nack(request: IncomingRequest) -> Sequence[bytes]:
+    message_id = request.header.get("message_id")
+    if message_id not in RESP_CACHE:
+        return ()
+    bitmap = request.payload.get("bitmap")
+    if not isinstance(bitmap, (bytes, bytearray)):
+        return ()
+    seqs = _bitmap_to_seq(bitmap)
+    ts, cached = RESP_CACHE.get(message_id, (0.0, []))
+    to_resend: list[bytes] = []
+    for seq in seqs:
+        if 0 <= seq < len(cached):
+            to_resend.append(cached[seq])
+    if to_resend:
+        LOGGER.info("NACK resend message_id=%s seqs=%s", message_id, seqs)
+    return to_resend
+
+
+def _bitmap_to_seq(bitmap: bytes) -> list[int]:
+    out: list[int] = []
+    for idx, byte in enumerate(bitmap):
+        for bit in range(8):
+            if byte & (1 << bit):
+                out.append(idx * 8 + bit)
+    return out
+
+
+def _purge_cache() -> None:
+    now = time.time()
+    expired = [mid for mid, (ts, _) in RESP_CACHE.items() if now - ts > RESP_CACHE_TTL]
+    for mid in expired:
+        RESP_CACHE.pop(mid, None)
+
+
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:
     """AkariUdpServer から呼ばれるハンドラ本体."""
+
+    if request.packet_type == "nack":
+        return _handle_nack(request)
+    if request.packet_type == "ack":
+        return ()
 
     if request.packet_type != "req":
         return _encode_error(
