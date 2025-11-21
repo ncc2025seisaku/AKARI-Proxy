@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from akari_udp_py import decode_packet_py, encode_request_py
+from akari_udp_py import decode_packet_py, encode_request_py, encode_request_v2_py
 
 LOGGER = logging.getLogger(__name__)
 
@@ -72,11 +72,20 @@ class ResponseOutcome:
 class AkariUdpClient:
     """AKARI-UDP リクエストを外部プロキシへ送信し、レスポンス/エラーを集約する。"""
 
-    def __init__(self, remote_addr: tuple[str, int], psk: bytes, *, timeout: float = 2.0, buffer_size: int = 65535):
+    def __init__(
+        self,
+        remote_addr: tuple[str, int],
+        psk: bytes,
+        *,
+        timeout: float = 2.0,
+        buffer_size: int = 65535,
+        protocol_version: int = 2,
+    ):
         self._remote_addr = remote_addr
         self._psk = psk
         self._timeout = timeout
         self._buffer_size = buffer_size
+        self._version = protocol_version
 
     def send_request(
         self,
@@ -89,7 +98,10 @@ class AkariUdpClient:
         """Request を送信し、resp/error を受信してまとめる。"""
 
         if datagram is None:
-            datagram = encode_request_py(url, message_id, timestamp, self._psk)
+            if self._version >= 2:
+                datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, 0, self._psk)
+            else:
+                datagram = encode_request_py(url, message_id, timestamp, self._psk)
 
         packets: list[Mapping[str, Any]] = []
         accumulator = ResponseAccumulator(message_id)

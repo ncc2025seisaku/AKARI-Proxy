@@ -6,7 +6,14 @@ import logging
 import time
 from typing import Sequence
 
-from akari_udp_py import encode_response_chunk_py, encode_response_first_chunk_py
+from akari_udp_py import (
+    encode_error_py,
+    encode_error_v2_py,
+    encode_response_chunk_py,
+    encode_response_chunk_v2_py,
+    encode_response_first_chunk_py,
+    encode_response_first_chunk_v2_py,
+)
 
 from ..udp_server import IncomingRequest, encode_error_response
 from .http_client import (
@@ -21,7 +28,7 @@ from .http_client import (
 LOGGER = logging.getLogger(__name__)
 
 MTU_PAYLOAD_SIZE = 1180
-FIRST_CHUNK_METADATA_LEN = 8
+FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
 
 ERROR_INVALID_URL = 10
@@ -57,30 +64,61 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     first_chunk, tail_chunks = _split_body(body)
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
+    version = int(request.header.get("version", 1))
+    flags = 0
+    header_block = b""  # TODO: pack HTTP headers per v2 spec
 
-    datagrams: list[bytes] = [
-        encode_response_first_chunk_py(
-            response["status_code"],
-            body_len,
-            first_chunk,
-            message_id,
-            seq_total,
-            timestamp,
-            request.psk,
-        )
-    ]
-
-    for index, chunk in enumerate(tail_chunks, start=1):
-        datagrams.append(
-            encode_response_chunk_py(
-                chunk,
+    if version >= 2:
+        datagrams: list[bytes] = [
+            encode_response_first_chunk_v2_py(
+                response["status_code"],
+                body_len,
+                header_block,
+                first_chunk,
                 message_id,
-                index,
+                seq_total,
+                flags,
+                timestamp,
+                request.psk,
+            )
+        ]
+    else:
+        datagrams = [
+            encode_response_first_chunk_py(
+                response["status_code"],
+                body_len,
+                first_chunk,
+                message_id,
                 seq_total,
                 timestamp,
                 request.psk,
             )
-        )
+        ]
+
+    for index, chunk in enumerate(tail_chunks, start=1):
+        if version >= 2:
+            datagrams.append(
+                encode_response_chunk_v2_py(
+                    chunk,
+                    message_id,
+                    index,
+                    seq_total,
+                    flags,
+                    timestamp,
+                    request.psk,
+                )
+            )
+        else:
+            datagrams.append(
+                encode_response_chunk_py(
+                    chunk,
+                    message_id,
+                    index,
+                    seq_total,
+                    timestamp,
+                    request.psk,
+                )
+            )
 
     return datagrams
 
@@ -101,12 +139,26 @@ def _encode_error(
         http_status,
         safe_message,
     )
-    return encode_error_response(
-        request,
-        error_code=error_code,
-        http_status=http_status,
-        message=safe_message,
-    )
+    version = int(request.header.get("version", 1))
+    if version >= 2:
+        datagram = encode_error_v2_py(
+            error_code,
+            http_status,
+            safe_message,
+            request.header["message_id"],
+            request.header["timestamp"],
+            request.psk,
+        )
+    else:
+        datagram = encode_error_py(
+            error_code,
+            http_status,
+            safe_message,
+            request.header["message_id"],
+            request.header["timestamp"],
+            request.psk,
+        )
+    return (datagram,)
 
 
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:

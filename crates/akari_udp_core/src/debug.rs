@@ -3,10 +3,10 @@ use crate::header::HEADER_LEN;
 use crate::hmac::TAG_LEN;
 use crate::{AkariError, Payload};
 
-/// デバッグ用にパケットを文字列整形して返す。
+/// デバッグ用途にパケットの主要フィールドをテキスト化する。
 /// - Header: フィールド一覧
-/// - Payload: 種別別の内容
-/// - HMAC: 先頭16byteを hex 表記
+/// - Payload: 中身の概略（長さ中心）
+/// - HMAC: 先頭16byteの hex 表示
 pub fn debug_dump(datagram: &[u8], psk: &[u8]) -> Result<String, AkariError> {
     if datagram.len() < HEADER_LEN + TAG_LEN {
         return Err(AkariError::InvalidPacketLength {
@@ -46,19 +46,32 @@ pub fn debug_dump(datagram: &[u8], psk: &[u8]) -> Result<String, AkariError> {
     writeln!(&mut out, "-- payload --")?;
     match &parsed.payload {
         Payload::Request(req) => {
-            writeln!(&mut out, "Request: url={}", req.url)?;
+            writeln!(
+                &mut out,
+                "Request: method={:?} url={} headers_len={}",
+                req.method,
+                req.url,
+                req.headers.len()
+            )?;
         }
         Payload::Response(resp) => {
             writeln!(
                 &mut out,
-                "Response: seq={}/{} is_first={} status_code={:?} body_len={:?} chunk_len={}",
+                "Response: seq={}/{} is_first={} status_code={:?} body_len={:?} headers_len={:?} chunk_len={}",
                 resp.seq,
                 resp.seq_total,
                 resp.is_first,
                 resp.status_code,
                 resp.body_len,
+                resp.headers.as_ref().map(|h| h.len()),
                 resp.chunk.len()
             )?;
+        }
+        Payload::Ack(ack) => {
+            writeln!(&mut out, "Ack: first_lost_seq={}", ack.first_lost_seq)?;
+        }
+        Payload::Nack(nack) => {
+            writeln!(&mut out, "Nack: bitmap_len={} bits={}", nack.bitmap.len(), hex::encode(&nack.bitmap))?;
         }
         Payload::Error(err) => {
             writeln!(
