@@ -388,3 +388,128 @@ enable_img = false
 4. ローカルプロキシ（Python + Rustコア）実装・フィルタ機能実装
 5. Windows 上のブラウザからの動作確認
 6. （将来）iOS/Android への Rust コア組込み
+
+
+---
+
+# 11. AKARI-UDP Protocol v2 (Draft)
+
+## 11.1 目的と優先ポイント
+
+| 目的 | 具体内容 |
+| --- | --- |
+| 低オーバヘッド | MTU1200B 以下で1パケット完結を基本、ACK/NACKを最小限にして輻輳時も取得を維持 |
+| HTTPヘッダ内包 | レスポンス seq=0 にHTTPヘッダ+body_chunk0を同梱し、そのままブラウザに渡せる形式 |
+| 単純再送 | 累積ACKなし。欠落seqのみを指すfirst-lost ACKまたはNACKビットマップで再送指示 |
+| 軽量暗号 | PSK前提でXChaCha20-Poly1305をEフラグで選択、未使用時はHMAC-SHA256先頭16B |
+| 任意圧縮 | 本文のみ zstd Lv1 をCフラグで指定。ヘッダは静的テーブル圧縮で十分小型化 |
+
+## 11.2 全体シーケンス（ブラウザ表示まで）
+```text
+Browser ─HTTP GET─> Local Proxy ─AKARI v2/UDP─> Remote Proxy ─HTTP(S)─> Origin
+                    <─resp type=1 seq=0 (status + hdr + body0)
+                    <─resp type=1 seq>=1 (body chunk)
+欠落検知: Local→Remote で NACK(type=3) または ACK(type=2, first_lost) を送付
+完了: F flag または body_len 到達でブラウザへ終了通知
+```
+
+## 11.3 ヘッダ構造（v1互換24B固定）
+```
+0                7 8               15 16              23
++----------------+-----------------+------------------+
+| 'A''K' |ver|type|flags|rsv| message_id (8B)        |
++----------------+-----------------+------------------+
+| message_id cont.| seq (u16) | seq_total (u16)      |
++-----------------------------------------------------+
+| payload_len(u16)| timestamp(u32)                    |
++-----------------+-----------------------------------+
+```
+flags: `E`=暗号, `H`=HTTP圧縮, `C`=本文圧縮, `F`=終端。他0。末尾16BはE=1ならAEADタグ、E=0ならHMAC。
+
+## 11.4 type別ペイロード
+### type=0 Request
+| ofs | size | field | 説明 |
+| --- | --- | --- | --- |
+|0|1|method|0=GET,1=HEAD,2=POST(小) |
+|1-2|2|url_len|URL長 |
+|3-4|2|opt_hdr_len|追加HTTPヘッダ長 |
+|5-|url_len|url_bytes UTF-8 |
+|…|opt_hdr_len|optional headers (11.5) |
+
+### type=1 Response
+- seq=0 : `status(2) | hdr_block_len(2) | body_len(4) | hdr_block | body_chunk0`
+- seq>=1 : `body_chunk`
+- `F=1` または `body_len` 到達で完了。
+
+### type=2 ACK (first-lost)
+| ofs | size | field |
+| --- | --- | --- |
+|0-1|2|first_lost_seq (全受信なら65535)|
+
+### type=3 NACK
+| ofs | size | field |
+| --- | --- | --- |
+|0|1|bitmap_len|
+|1-|bitmap|seq0基準bit=1が欠落|
+
+### type=4 Error
+| ofs | size | field |
+| --- | --- | --- |
+|0|1|error_code|
+|1-2|2|http_status|
+|3-4|2|msg_len|
+|5-|msg UTF-8|
+
+## 11.5 HTTPヘッダ圧縮（ブラウザ再構成用）
+静的名テーブル（1B ID）。ID=0は未登録名。
+| ID | Name |
+| --- | --- |
+|1:content-type|2:content-length|3:cache-control|4:etag|5:last-modified|6:date|7:server|8:content-encoding|9:accept-ranges|10:set-cookie|11:location|
+
+エンコード:
+```
+static-id(1) | value_len(varint) | value
+ID=0: 0 | name_len(1) | name | value_len(varint) | value
+```
+`hdr_block`を復元してそのままHTTPヘッダとしてブラウザへ転送。
+
+## 11.6 暗号化オプション (E flag)
+- XChaCha20-Poly1305 (nonce12B = message_id(8)+seq(2)+flags&0x3)
+- 256bit PSK。error_code=0xF0 を予約し鍵更新を後付け可能。
+- E=0 は HMAC-SHA256 先頭16B。
+
+## 11.7 輻輳・再送
+- 送信ウィンドウ4–8pkt。RTT×2で未ACKなら再送。
+- NACK bitmap 指定seqを再送、連続LOSSでwindow半減(>=1)。
+- 204/304/HEAD は seq=0 にF=1を立て単パケット完了。
+
+## 11.8 圧縮 (C flag)
+- リモート側がデフォルトで Brotli 圧縮応答を返す場合は二重圧縮になるため `C=0` を推奨（C=1 は任意機能として残し、非Brotli環境やプレーン応答でのみ利用）。
+- `C=1` 時は本文のみ zstd Lv1。ヘッダは静的名テーブルで十分小型。
+- MTU超過しそうなら分割し seq_total を増やす。
+
+## 11.9 互換/移行
+- ver=0x02のみ受理、未知verは error(type=4, http_status=505)。
+- v1クライアントはHMAC不一致で破棄され安全。
+- 同ポート運用時は magic+ver で振り分け。
+
+## 11.10 実装TODO (v2)
+- Rust core: v2ヘッダ・AEAD・ヘッダ圧縮・ACK/NACK。
+- Python binding: `encode_request_v2`, `decode_packet_v2`, `assemble_response`。
+- Proxy: HTTPヘッダ再構成、zstdオプション、タイムアウト/サイズ上限。
+- Test: 1200B境界、欠落seq再送、E/C有無、304/204単pkt。
+
+## 11.11 メリット / デメリット（v2設計）
+### メリット
+- HTTPヘッダを seq=0 で必ず送るため、ブラウザは即座にヘッダを受け取り早期描画できる。
+- 累積ACKを捨てた first-lost / NACK 方式で制御パケット数が最小化され、輻輳時の生存性が高い。
+- 24Bヘッダ＋可変タグのみのシンプル構造で、実装とデバッグが容易（v1と同一サイズなので実装差分が小さい）。
+- 暗号化(E)と圧縮(C)をフラグで選択でき、Brotli環境ではC=0で二重圧縮を避け、平文HMAC運用も維持できる。
+- MTU1200B以下を基本とするためIP断片化リスクが低く、モバイル回線でのパケットロスに強い。
+
+### デメリット
+- 累積ACKを持たないため、多数欠落時はNACKビットマップが相対的に大きくなり得る（ただし通常4–8pktウィンドウで軽減）。
+- HTTPヘッダを毎回seq=0で同梱するため、非常に小さいレスポンスではヘッダサイズ分の相対オーバヘッドが目立つ。
+- PSK前提のため、鍵配布を外部で行う必要がある（自動鍵交換は後付け設計）。
+- Brotli応答をそのまま中継する設計上、追加の圧縮効果は限定的で、圧縮アルゴリズムを誤ると遅延悪化の可能性。
+- UDP前提のため、一部ネットワーク環境ではフィルタリングや優先度低下を受けるリスクがある。
