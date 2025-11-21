@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from akari_udp_py import (
     encode_error_py,
@@ -30,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 MTU_PAYLOAD_SIZE = 1180
 FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
+FLAG_HAS_HEADER = 0x40
 
 ERROR_INVALID_URL = 10
 ERROR_RESPONSE_TOO_LARGE = 11
@@ -57,6 +58,48 @@ def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
     return first_chunk, tail_chunks
 
 
+STATIC_HEADER_IDS: dict[str, int] = {
+    "content-type": 1,
+    "content-length": 2,
+    "cache-control": 3,
+    "etag": 4,
+    "last-modified": 5,
+    "date": 6,
+    "server": 7,
+    "content-encoding": 8,
+    "accept-ranges": 9,
+    "set-cookie": 10,
+    "location": 11,
+}
+
+
+def _varint_u16(value: int) -> bytes:
+    if value < 0 or value > 0xFFFF:
+        raise ValueError("value out of range for u16 varint")
+    # simple 2-byte big endian (spec varint簡略化)
+    return value.to_bytes(2, "big")
+
+
+def _encode_header_items(headers: dict[str, str]) -> Iterable[bytes]:
+    for name, value in headers.items():
+        lname = name.lower()
+        value_bytes = value.encode("utf-8", errors="replace")
+        if len(value_bytes) > 0xFFFF:
+            continue  # skip overly large header to keep packet small
+        if lname in STATIC_HEADER_IDS:
+            yield bytes([STATIC_HEADER_IDS[lname]]) + _varint_u16(len(value_bytes)) + value_bytes
+        else:
+            name_bytes = lname.encode("utf-8", errors="replace")
+            if len(name_bytes) > 0xFF:
+                continue
+            yield b"\x00" + bytes([len(name_bytes)]) + name_bytes + _varint_u16(len(value_bytes)) + value_bytes
+
+
+def encode_header_block(headers: dict[str, str]) -> bytes:
+    """Pack HTTP headers into the v2 static-table block."""
+    return b"".join(_encode_header_items(headers))
+
+
 def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) -> Sequence[bytes]:
     body = response["body"]
     body_len = len(body)
@@ -65,8 +108,8 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
     version = int(request.header.get("version", 1))
-    flags = 0
-    header_block = b""  # TODO: pack HTTP headers per v2 spec
+    header_block = encode_header_block(response["headers"])
+    flags = FLAG_HAS_HEADER if header_block else 0
 
     if version >= 2:
         datagrams: list[bytes] = [

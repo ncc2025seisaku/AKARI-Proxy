@@ -1,4 +1,4 @@
-"""ローカルプロキシが外部プロキシへ UDP パケットを送受信するためのユーティリティ。"""
+"""ローカルプロキシがプロキシ側 UDP パケットを送受信するクライアント。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Tuple
 
 from akari_udp_py import decode_packet_py, encode_request_py, encode_request_v2_py
 
@@ -28,6 +28,8 @@ class ResponseAccumulator:
     seq_total: int | None = None
     status_code: int | None = None
     body_len: int | None = None
+    headers_bytes: bytes | None = None
+    headers: dict[str, str] | None = None
 
     def add_chunk(self, packet: Mapping[str, Any]) -> None:
         header = packet["header"]
@@ -45,6 +47,10 @@ class ResponseAccumulator:
             self.status_code = payload["status_code"]
         if payload.get("body_len") is not None:
             self.body_len = payload["body_len"]
+        hdr_bytes = payload.get("headers")
+        if hdr_bytes and self.headers_bytes is None:
+            self.headers_bytes = bytes(hdr_bytes)
+            self.headers = decode_header_block(self.headers_bytes)
 
     @property
     def complete(self) -> bool:
@@ -62,6 +68,7 @@ class ResponseOutcome:
     packets: list[Mapping[str, Any]]
     body: bytes | None
     status_code: int | None
+    headers: dict[str, str] | None
     error: Mapping[str, Any] | None
     complete: bool
     timed_out: bool
@@ -69,8 +76,66 @@ class ResponseOutcome:
     bytes_received: int
 
 
+STATIC_HEADER_IDS = {
+    1: "content-type",
+    2: "content-length",
+    3: "cache-control",
+    4: "etag",
+    5: "last-modified",
+    6: "date",
+    7: "server",
+    8: "content-encoding",
+    9: "accept-ranges",
+    10: "set-cookie",
+    11: "location",
+}
+
+
+def _read_varint_u16(buf: memoryview, offset: int) -> Tuple[int, int]:
+    end = offset + 2
+    if end > len(buf):
+        raise ValueError("varint truncated")
+    return int.from_bytes(buf[offset:end], "big"), end
+
+
+def decode_header_block(block: bytes) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    buf = memoryview(block)
+    pos = 0
+    while pos < len(buf):
+        hid = buf[pos]
+        pos += 1
+        if hid == 0:
+            if pos >= len(buf):
+                break
+            name_len = buf[pos]
+            pos += 1
+            end_name = pos + name_len
+            if end_name > len(buf):
+                break
+            name = bytes(buf[pos:end_name]).decode("utf-8", errors="replace")
+            pos = end_name
+            val_len, pos = _read_varint_u16(buf, pos)
+            end_val = pos + val_len
+            if end_val > len(buf):
+                break
+            value = bytes(buf[pos:end_val]).decode("utf-8", errors="replace")
+            pos = end_val
+            headers[name] = value
+        else:
+            val_len, pos = _read_varint_u16(buf, pos)
+            end_val = pos + val_len
+            if end_val > len(buf):
+                break
+            value = bytes(buf[pos:end_val]).decode("utf-8", errors="replace")
+            pos = end_val
+            name = STATIC_HEADER_IDS.get(hid, f"x-unknown-{hid}")
+            headers[name] = value
+    return headers
+
+
 class AkariUdpClient:
-    """AKARI-UDP リクエストを外部プロキシへ送信し、レスポンス/エラーを集約する。"""
+    """AKARI-UDP リクエストをリモートプロキシへ送信し、レスポンス/エラーを収集する。"""
 
     def __init__(
         self,
@@ -95,7 +160,7 @@ class AkariUdpClient:
         *,
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
-        """Request を送信し、resp/error を受信してまとめる。"""
+        """Request を送信し、resp/error を受信しきる。"""
 
         if datagram is None:
             if self._version >= 2:
@@ -159,6 +224,7 @@ class AkariUdpClient:
             packets=packets,
             body=body,
             status_code=accumulator.status_code,
+            headers=accumulator.headers,
             error=error_payload,
             complete=accumulator.complete,
             timed_out=timed_out,

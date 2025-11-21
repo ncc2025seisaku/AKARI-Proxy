@@ -119,14 +119,21 @@ class WebRouter:
 
     def _raw_response(self, url: str, outcome: ResponseOutcome) -> RouteResult:
         body = outcome.body or b""
+        # 基本のヘッダ
         headers = {
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Length": str(len(body)),
             "X-AKARI-Message-Id": f"0x{outcome.message_id:x}",
             "X-AKARI-Bytes-Sent": str(outcome.bytes_sent),
             "X-AKARI-Bytes-Received": str(outcome.bytes_received),
             "X-AKARI-Target": url,
         }
+        # 受信ヘッダから復元
+        if outcome.headers:
+            for k, v in outcome.headers.items():
+                headers[k.title()] = v
+        # content-type が無ければデフォルトで text/html
+        if "Content-Type" not in headers:
+            headers["Content-Type"] = "text/html; charset=utf-8"
+        headers["Content-Length"] = str(len(body))
         status_code = int(outcome.status_code or 200)
         return RouteResult(status_code=status_code, body=body, headers=headers)
 

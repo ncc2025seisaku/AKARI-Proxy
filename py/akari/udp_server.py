@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -50,6 +51,12 @@ class AkariUdpServer:
         self.buffer_size = buffer_size
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
+        if os.name == "nt":
+            SIO_UDP_CONNRESET = 0x9800000C
+            try:
+                self._sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
+            except OSError:
+                LOGGER.warning("failed to disable UDP connreset on Windows; continuing")
         if timeout is not None:
             self._sock.settimeout(timeout)
         self.address = self._sock.getsockname()
@@ -59,6 +66,9 @@ class AkariUdpServer:
 
         try:
             data, client_addr = self._sock.recvfrom(self.buffer_size)
+        except ConnectionResetError:
+            LOGGER.debug("recvfrom ConnectionResetError (possible ICMP port unreachable); ignoring")
+            return None
         except socket.timeout:
             return None
 
