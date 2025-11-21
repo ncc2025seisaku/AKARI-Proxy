@@ -14,10 +14,9 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from akari.local_proxy.content_filter import ContentFilter, FilterDecision
 from akari.udp_client import AkariUdpClient, ResponseOutcome
-
 from .config import WebProxyConfig
+from local_proxy.content_filter import ContentCategory, ContentFilter, FilterDecision
 
 
 @dataclass
@@ -151,6 +150,21 @@ class WebRouter:
         body, decompressed = self._maybe_decompress(body, headers)
 
         content_type = headers.get("Content-Type", "").lower()
+        # レスポンス側フィルタ（Content-Typeベース）
+        blocked = self._apply_response_filter(content_type)
+        if blocked:
+            headers_filtered = {
+                "Content-Length": "0",
+                "Cache-Control": "no-cache",
+                "X-AKARI-Filtered": blocked.value,
+            }
+            headers_filtered.setdefault("Content-Type", "text/plain; charset=utf-8")
+            return RouteResult(
+                status_code=204,
+                body=b"",
+                headers=headers_filtered,
+            )
+
         if content_type.startswith("text/html") and decompressed:
             body = self._rewrite_html_to_proxy(body)
         headers["Content-Length"] = str(len(body))
@@ -214,6 +228,17 @@ class WebRouter:
             lk = key.lower()
             if lk in ("content-security-policy", "content-security-policy-report-only"):
                 headers.pop(key, None)
+
+    def _apply_response_filter(self, content_type: str) -> ContentCategory | None:
+        """Decide whether to block based on Content-Type."""
+        ct = content_type.split(";")[0].strip()
+        if ct.startswith("text/javascript") or ct == "application/javascript" or ct == "application/x-javascript":
+            return ContentCategory.JAVASCRIPT if not self._content_filter._is_allowed(ContentCategory.JAVASCRIPT) else None
+        if ct == "text/css":
+            return ContentCategory.STYLESHEET if not self._content_filter._is_allowed(ContentCategory.STYLESHEET) else None
+        if ct.startswith("image/"):
+            return ContentCategory.IMAGE if not self._content_filter._is_allowed(ContentCategory.IMAGE) else None
+        return None
 
     # ---------------------------------------------------------------------------
     # Content-Encoding decode

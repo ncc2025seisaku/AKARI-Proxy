@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
-from akari.local_proxy.config import ContentFilterSettings
+from local_proxy.config import ContentFilterSettings
 
 
 @dataclass(frozen=True)
