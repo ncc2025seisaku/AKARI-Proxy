@@ -143,6 +143,9 @@ class WebRouter:
         if outcome.headers:
             for k, v in outcome.headers.items():
                 headers[k.title()] = v
+        # 転送後は必ず固定長で返すため Transfer-Encoding は落とす
+        headers.pop("Transfer-Encoding", None)
+        headers.pop("transfer-encoding", None)
         if "Content-Type" not in headers:
             headers["Content-Type"] = "text/html; charset=utf-8"
 
