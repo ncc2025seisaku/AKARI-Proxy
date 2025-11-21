@@ -52,11 +52,11 @@ class AkariUdpServer:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
         if os.name == "nt":
-            SIO_UDP_CONNRESET = 0x9800000C
+            SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
             try:
                 self._sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
-            except OSError:
-                LOGGER.warning("failed to disable UDP connreset on Windows; continuing")
+            except (OSError, ValueError):
+                LOGGER.warning("could not disable UDP connreset (Windows); continuing")
         if timeout is not None:
             self._sock.settimeout(timeout)
         self.address = self._sock.getsockname()
