@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
+from akari.local_proxy.config import ContentFilterSettings
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class WebProxyConfig:
     mode: str
     ui: UIConfig
     remote: RemoteProxyConfig
+    content_filter: ContentFilterSettings
 
 
 class ConfigError(ValueError):
@@ -59,7 +61,21 @@ def load_config(path: str | Path) -> WebProxyConfig:
         timeout=_require_float(remote_data, "timeout", default=2.0),
     )
 
-    return WebProxyConfig(listen_host=listen_host, listen_port=listen_port, mode=mode, ui=ui, remote=remote)
+    filter_data = data.get("content_filter", {})
+    content_filter = ContentFilterSettings(
+        enable_js=_require_bool(filter_data, "enable_js", default=True),
+        enable_css=_require_bool(filter_data, "enable_css", default=True),
+        enable_img=_require_bool(filter_data, "enable_img", default=True),
+    )
+
+    return WebProxyConfig(
+        listen_host=listen_host,
+        listen_port=listen_port,
+        mode=mode,
+        ui=ui,
+        remote=remote,
+        content_filter=content_filter,
+    )
 
 
 def _read_toml(path: str | Path) -> dict[str, Any]:

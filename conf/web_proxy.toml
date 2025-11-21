@@ -17,3 +17,8 @@ port = 9000
 psk = "test-psk-0000-test"
 psk_hex = false
 timeout = 2.0
+
+[content_filter]
+enable_js = true
+enable_css = true
+enable_img = true
