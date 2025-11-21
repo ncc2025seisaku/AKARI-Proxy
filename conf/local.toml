@@ -4,6 +4,6 @@
 # JavaScript requests are allowed when true.
 enable_js = true
 # Stylesheet requests are allowed when true.
-enable_css = false
+enable_css = true
 # Image requests are allowed when true.
 enable_img = true
