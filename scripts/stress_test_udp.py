@@ -161,6 +161,7 @@ class StressCounters:
     bytes_sent: int = 0
     bytes_received: int = 0
     latencies: list[float] = field(default_factory=list)
+    exceptions: int = 0
 
 
 class ResultAggregator:
@@ -179,6 +180,12 @@ class ResultAggregator:
                 self._counters.error += 1
             self._counters.bytes_sent += outcome.bytes_sent
             self._counters.bytes_received += outcome.bytes_received
+    def add_exception(self, *, bytes_sent: int = 0, bytes_received: int = 0) -> None:
+        with self._lock:
+            self._counters.error += 1
+            self._counters.exceptions += 1
+            self._counters.bytes_sent += bytes_sent
+            self._counters.bytes_received += bytes_received
 
     def snapshot(self) -> StressCounters:
         with self._lock:
@@ -189,6 +196,7 @@ class ResultAggregator:
                 bytes_sent=self._counters.bytes_sent,
                 bytes_received=self._counters.bytes_received,
                 latencies=list(self._counters.latencies),
+                exceptions=self._counters.exceptions,
             )
         return copy
 
@@ -231,6 +239,7 @@ def worker_main(
     tasks: "queue.Queue[tuple[int, str]]",
     agg: ResultAggregator,
     delay: float,
+    logger: "LogWriter | None",
 ) -> None:
     while True:
         try:
@@ -238,9 +247,44 @@ def worker_main(
         except queue.Empty:
             return
         start = time.perf_counter()
-        outcome = client.send_request(url, message_id=idx, timestamp=int(time.time()))
+        try:
+            outcome = client.send_request(url, message_id=idx, timestamp=int(time.time()))
+        except Exception as exc:  # noqa: BLE001
+            elapsed = time.perf_counter() - start
+            agg.add_exception()
+            if logger:
+                logger.write(
+                    {
+                        "event": "exception",
+                        "worker": name,
+                        "url": url,
+                        "message_id": idx,
+                        "elapsed_sec": round(elapsed, 4),
+                        "error": f"{exc.__class__.__name__}: {exc}",
+                        "timestamp": time.time(),
+                    }
+                )
+            continue
+
         elapsed = time.perf_counter() - start
         agg.add(outcome, elapsed)
+        if logger:
+            logger.write(
+                {
+                    "event": "outcome",
+                    "worker": name,
+                    "url": url,
+                    "message_id": idx,
+                    "elapsed_sec": round(elapsed, 4),
+                    "complete": outcome.complete,
+                    "timed_out": outcome.timed_out,
+                    "status_code": outcome.status_code,
+                    "error": outcome.error,
+                    "bytes_sent": outcome.bytes_sent,
+                    "bytes_received": outcome.bytes_received,
+                    "timestamp": time.time(),
+                }
+            )
         LOGGER.debug("%s done url=%s elapsed=%.3fs complete=%s error=%s", name, url, elapsed, outcome.complete, outcome.error)
         if delay:
             time.sleep(delay)
@@ -256,6 +300,7 @@ def summarize(counters: StressCounters) -> dict[str, object]:
         "success": counters.success,
         "timeout": counters.timeout,
         "error": counters.error,
+        "exceptions": counters.exceptions,
         "bytes_sent": counters.bytes_sent,
         "bytes_received": counters.bytes_received,
         "latency_avg_sec": round(avg, 4),
@@ -272,6 +317,19 @@ def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]
     return q
 
 
+class LogWriter:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, obj: dict[str, object]) -> None:
+        line = json.dumps(obj, ensure_ascii=False)
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as fp:
+                fp.write(line + "\n")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="AKARI-UDP stress tester (disaster-mode)")
     parser.add_argument("--host", default="127.0.0.1", help="リモートプロキシのホスト")
@@ -286,6 +344,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--jitter", type=float, default=0.0, help="受信後に入れるジッター秒 (0 で無効)")
     parser.add_argument("--delay", type=float, default=0.0, help="各リクエスト完了後に入れる待機秒")
     parser.add_argument("--demo-server", action="store_true", help="ローカル簡易サーバを起動して自己完結でテストする")
+    parser.add_argument("--log-file", type=str, help="テスト結果を JSON Lines で追記出力するパス")
     parser.add_argument("--log-level", default="INFO", help="ログレベル")
     args = parser.parse_args(argv)
 
@@ -300,12 +359,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         target = server.address
         LOGGER.info("demo server listening on %s:%s", *target)
 
+    log_writer = LogWriter(Path(args.log_file)) if args.log_file else None
+
     tasks = build_tasks(args.requests, args.urls)
     agg = ResultAggregator()
     workers = []
     for i in range(args.concurrency):
         client = LossyAkariClient(target, psk, timeout=args.timeout, loss_rate=args.loss_rate, jitter=args.jitter)
-        t = threading.Thread(target=worker_main, args=(f"worker-{i+1}", client, tasks, agg, args.delay), daemon=True)
+        t = threading.Thread(
+            target=worker_main,
+            args=(f"worker-{i+1}", client, tasks, agg, args.delay, log_writer),
+            daemon=True,
+        )
         t.start()
         workers.append(t)
 
@@ -321,6 +386,26 @@ def main(argv: Sequence[str] | None = None) -> None:
     summary = summarize(counters)
     summary["elapsed_sec"] = round(elapsed, 3)
     summary["rps"] = round(args.requests / elapsed, 2) if elapsed else args.requests
+    if log_writer:
+        log_writer.write(
+            {
+                "event": "summary",
+                "timestamp": time.time(),
+                "summary": summary,
+                "params": {
+                    "host": target[0],
+                    "port": target[1],
+                    "requests": args.requests,
+                    "concurrency": args.concurrency,
+                    "loss_rate": args.loss_rate,
+                    "jitter": args.jitter,
+                    "timeout": args.timeout,
+                    "delay": args.delay,
+                    "urls": args.urls,
+                    "demo_server": args.demo_server,
+                },
+            }
+        )
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
