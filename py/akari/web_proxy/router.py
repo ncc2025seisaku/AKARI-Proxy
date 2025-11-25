@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
+import re
 import secrets
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin
 
 from akari.udp_client import AkariUdpClient, ResponseOutcome
-
 from .config import WebProxyConfig
+from local_proxy.content_filter import ContentCategory, ContentFilter, FilterDecision
 
 
 @dataclass
@@ -28,6 +30,7 @@ class WebRouter:
     """HTTP router that serves the static UI and exposes an AKARI-backed proxy endpoint."""
 
     def __init__(self, config: WebProxyConfig, static_dir: Path | None = None, entry_file: str = "index.html"):
+        self._logger = logging.getLogger(__name__)
         self._config = config
         remote = config.remote
         self._udp_client = AkariUdpClient((remote.host, remote.port), remote.psk, timeout=remote.timeout)
@@ -35,10 +38,15 @@ class WebRouter:
         self._message_counter = secrets.randbelow(0xFFFF) or 1
         self._static_dir = (static_dir or Path(__file__).with_name("static")).resolve()
         self._entry_file = entry_file
+        self._proxy_base = f"http://{config.listen_host}:{config.listen_port}/"
+        self._content_filter = ContentFilter(config.content_filter)
 
+    # ------------------------------- HTTP handlers -------------------------------
     def handle_get(self, path: str, headers: Mapping[str, str]) -> RouteResult:
         parsed = urlsplit(path)
         params = parse_qs(parsed.query)
+        if parsed.path == "/api/filter":
+            return self._handle_filter_get()
         if parsed.path in ("/proxy", "/api/proxy"):
             return self._handle_proxy(params, {}, {})
         if parsed.path in ("/", "", "/index.html"):
@@ -47,7 +55,7 @@ class WebRouter:
                 return static
         if parsed.path == "/healthz":
             return RouteResult(status_code=200, body=b"ok", headers={"Content-Type": "text/plain; charset=utf-8"})
-        path_proxy = self._handle_path_proxy(parsed.path)
+        path_proxy = self._handle_path_proxy(parsed.path, params)
         if path_proxy:
             return path_proxy
         static = self._serve_static_asset(parsed.path)
@@ -73,8 +81,12 @@ class WebRouter:
         if parsed.path in ("/", "/proxy", "/api/proxy"):
             query_params = parse_qs(parsed.query)
             return self._handle_proxy(query_params, form_params, json_payload)
+        if parsed.path == "/api/filter":
+            payload = json_payload or {k: v[0] for k, v in form_params.items() if v}
+            return self._handle_filter_update(payload)
         return RouteResult(status_code=404, body=b"Not Found", headers={"Content-Type": "text/plain; charset=utf-8"})
 
+    # ------------------------------- proxy core -------------------------------
     def _handle_proxy(
         self,
         query_params: Mapping[str, list[str]],
@@ -82,23 +94,66 @@ class WebRouter:
         json_payload: Mapping[str, Any],
     ) -> RouteResult:
         raw_url = self._extract_url(form_params, json_payload, query_params)
-        return self._execute_proxy(raw_url)
+        skip_filter = bool(query_params.get("entry"))
+        return self._execute_proxy(raw_url, skip_filter=skip_filter)
 
-    def _handle_path_proxy(self, raw_path: str) -> RouteResult | None:
+    def _handle_filter_get(self) -> RouteResult:
+        current = self._content_filter.snapshot()
+        payload = {
+            "enable_js": current.enable_js,
+            "enable_css": current.enable_css,
+            "enable_img": current.enable_img,
+            "enable_other": current.enable_other,
+        }
+        return self._json_response(200, payload)
+
+    def _handle_filter_update(self, payload: Mapping[str, Any]) -> RouteResult:
+        try:
+            enable_js = self._coerce_bool(payload, "enable_js")
+            enable_css = self._coerce_bool(payload, "enable_css")
+            enable_img = self._coerce_bool(payload, "enable_img")
+            enable_other = self._coerce_bool(payload, "enable_other")
+        except ValueError as exc:
+            return self._json_response(400, {"error": str(exc)})
+
+        if enable_js is None and enable_css is None and enable_img is None and enable_other is None:
+            return self._json_response(400, {"error": "enable_js/enable_css/enable_img/enable_other のいずれかを指定してください。"})
+
+        updated = self._content_filter.update(
+            enable_js=enable_js, enable_css=enable_css, enable_img=enable_img, enable_other=enable_other
+        )
+        payload = {
+            "enable_js": updated.enable_js,
+            "enable_css": updated.enable_css,
+            "enable_img": updated.enable_img,
+            "enable_other": updated.enable_other,
+        }
+        return self._json_response(200, payload)
+
+    def _handle_path_proxy(self, raw_path: str, params: Mapping[str, list[str]]) -> RouteResult | None:
         candidate = raw_path.lstrip("/")
         if not candidate:
             return None
         url = unquote(candidate)
         if not url.startswith(("http://", "https://")):
             return None
-        return self._execute_proxy(url)
+        skip_filter = bool(params.get("entry"))
+        return self._execute_proxy(url, skip_filter=skip_filter)
 
-    def _execute_proxy(self, raw_url: str) -> RouteResult:
+    def _execute_proxy(self, raw_url: str, *, skip_filter: bool = False) -> RouteResult:
         if not raw_url:
             return self._text_response(400, "url パラメータを指定してください。")
         target_url = self._normalize_user_input(raw_url)
         if not target_url:
             return self._text_response(400, "HTTP/HTTPS の URL を指定してください。")
+
+        # content filter (skip when explicitly requested for entry navigation)
+        if not skip_filter:
+            decision: FilterDecision = self._content_filter.evaluate(target_url)
+            if decision.blocked:
+                headers = dict(decision.headers)
+                headers.setdefault("Content-Type", "text/plain; charset=utf-8")
+                return RouteResult(status_code=decision.status_code or 204, body=decision.body, headers=headers)
 
         try:
             outcome = self._fetch_via_udp(target_url)
@@ -111,25 +166,161 @@ class WebRouter:
             status = int(payload.get("http_status", 502) or 502)
             return self._text_response(status, message)
         if outcome.timed_out:
-            return self._text_response(504, "AKARI-UDP のレスポンスがタイムアウトしました。")
+            return self._text_response(504, "AKARI-UDP レスポンスがタイムアウトしました。")
         if not outcome.complete or outcome.body is None:
-            return self._text_response(502, "レスポンスが不完全です。")
+            return self._text_response(502, "レスポンスが揃いませんでした。")
 
-        return self._raw_response(target_url, outcome)
+        return self._raw_response(target_url, outcome, skip_filter=skip_filter)
 
-    def _raw_response(self, url: str, outcome: ResponseOutcome) -> RouteResult:
+    # ------------------------------- response shaping -------------------------------
+    def _raw_response(self, url: str, outcome: ResponseOutcome, *, skip_filter: bool = False) -> RouteResult:
         body = outcome.body or b""
         headers = {
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Length": str(len(body)),
             "X-AKARI-Message-Id": f"0x{outcome.message_id:x}",
             "X-AKARI-Bytes-Sent": str(outcome.bytes_sent),
             "X-AKARI-Bytes-Received": str(outcome.bytes_received),
             "X-AKARI-Target": url,
         }
+        if outcome.headers:
+            for k, v in outcome.headers.items():
+                headers[k.title()] = v
+        # 転送後は必ず固定長で返すため Transfer-Encoding は落とす
+        headers.pop("Transfer-Encoding", None)
+        headers.pop("transfer-encoding", None)
+        if "Content-Type" not in headers:
+            headers["Content-Type"] = "text/html; charset=utf-8"
+
+        self._strip_security_headers(headers)
+        body, decompressed = self._maybe_decompress(body, headers)
+
+        content_type = headers.get("Content-Type", "").lower()
+        # レスポンス側フィルタ（Content-Typeベース）: entry=1 のリクエストはスキップ
+        if not skip_filter:
+            blocked = self._apply_response_filter(content_type)
+            if blocked:
+                headers_filtered = {
+                    "Content-Length": "0",
+                    "Cache-Control": "no-cache",
+                    "X-AKARI-Filtered": blocked.value,
+                }
+                headers_filtered.setdefault("Content-Type", "text/plain; charset=utf-8")
+                return RouteResult(
+                    status_code=204,
+                    body=b"",
+                    headers=headers_filtered,
+                )
+
+        if content_type.startswith("text/html") and decompressed:
+            body = self._rewrite_html_to_proxy(body, url)
+        headers["Content-Length"] = str(len(body))
         status_code = int(outcome.status_code or 200)
         return RouteResult(status_code=status_code, body=body, headers=headers)
 
+    # ---------------------------------------------------------------------------
+    # HTML rewrite: absolute URLs -> proxy pass
+    # ---------------------------------------------------------------------------
+    def _rewrite_html_to_proxy(self, body: bytes, source_url: str) -> bytes:
+        text = body.decode("utf-8", errors="replace")
+        base_url = source_url
+
+        def to_proxy(u: str) -> str:
+            # ignore schemes that should not be proxied
+            if not u or u.startswith(("data:", "javascript:", "mailto:", "#")):
+                return u
+            if u.startswith("//"):
+                u = "https:" + u
+            # resolve relative path against the source page URL
+            if base_url:
+                u = urljoin(base_url, u)
+            return self._proxy_base + u
+
+        # Allow whitespace/case variations around href/src attributes
+        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
+
+        def attr_repl(m: re.Match) -> str:
+            return f'{m.group("prefix")}{to_proxy(m.group(2))}'
+
+        text = attr_pattern.sub(attr_repl, text)
+
+        srcset_pattern = re.compile(r'\bsrcset\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+
+        def srcset_repl(m: re.Match) -> str:
+            parts = []
+            for entry in m.group(1).split(","):
+                ent = entry.strip()
+                if not ent:
+                    continue
+                tokens = ent.split()
+                if not tokens:
+                    continue
+                url = tokens[0]
+                rest = " ".join(tokens[1:])
+                url = to_proxy(url)
+                parts.append(" ".join([url, rest]).strip())
+            return f'srcset="{", ".join(parts)}"'
+
+        text = srcset_pattern.sub(srcset_repl, text)
+
+        registration_snippet = (
+            '<script>(function(){'
+            "if('serviceWorker' in navigator){"
+            "navigator.serviceWorker.register('/sw-akari.js',{scope:'/'}).catch(()=>{});"
+            "}"
+            "})();</script>"
+        )
+        text += registration_snippet
+
+        return text.encode("utf-8", errors="replace")
+
+    # ---------------------------------------------------------------------------
+    # Strip security headers (CSP etc.)
+    # ---------------------------------------------------------------------------
+    def _strip_security_headers(self, headers: dict[str, str]) -> None:
+        for key in list(headers.keys()):
+            lk = key.lower()
+            if lk in ("content-security-policy", "content-security-policy-report-only"):
+                headers.pop(key, None)
+
+    def _apply_response_filter(self, content_type: str) -> ContentCategory | None:
+        """Decide whether to block based on Content-Type."""
+        ct = content_type.split(";")[0].strip()
+        if ct.startswith("text/javascript") or ct == "application/javascript" or ct == "application/x-javascript":
+            return ContentCategory.JAVASCRIPT if not self._content_filter._is_allowed(ContentCategory.JAVASCRIPT) else None
+        if ct == "text/css":
+            return ContentCategory.STYLESHEET if not self._content_filter._is_allowed(ContentCategory.STYLESHEET) else None
+        if ct.startswith("image/"):
+            return ContentCategory.IMAGE if not self._content_filter._is_allowed(ContentCategory.IMAGE) else None
+        return None
+
+    # ---------------------------------------------------------------------------
+    # Content-Encoding decode
+    # ---------------------------------------------------------------------------
+    def _maybe_decompress(self, body: bytes, headers: dict[str, str]) -> tuple[bytes, bool]:
+        enc = headers.get("Content-Encoding", "").lower()
+        if not enc:
+            return body, True
+        try:
+            if enc in ("br", "brotli"):
+                import brotli  # type: ignore
+
+                body = brotli.decompress(body)
+            elif enc == "gzip":
+                import gzip
+
+                body = gzip.decompress(body)
+            elif enc == "deflate":
+                import zlib
+
+                body = zlib.decompress(body)
+            else:
+                return body, False
+            headers.pop("Content-Encoding", None)
+            return body, True
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning("failed to decompress body (encoding=%s): %s", enc, exc)
+            return body, False
+
+    # ------------------------------- utilities -------------------------------
     def _fetch_via_udp(self, url: str) -> ResponseOutcome:
         if not url.startswith(("http://", "https://")):
             raise ValueError("HTTP/HTTPS のみサポートします。")
@@ -138,7 +329,7 @@ class WebRouter:
         try:
             return self._udp_client.send_request(url, message_id, timestamp)
         except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"AKARI-UDP リクエストに失敗しました: {exc}") from exc
+            raise ValueError(f"AKARI-UDP リクエストに失敗: {exc}") from exc
 
     def _next_message_id(self) -> int:
         with self._message_lock:
@@ -183,6 +374,23 @@ class WebRouter:
                     return candidate
         return ""
 
+    def _coerce_bool(self, payload: Mapping[str, Any], key: str) -> bool | None:
+        """Accepts bool, 0/1, or typical truthy strings. Missing -> None."""
+        if key not in payload:
+            return None
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in {"1", "true", "yes", "on"}:
+                return True
+            if val in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError(f"{key} は true/false で指定してください。入力値: {value!r}")
+
     def _normalize_user_input(self, value: str) -> str | None:
         if not value:
             return ""
@@ -191,6 +399,14 @@ class WebRouter:
         if "://" not in value and "." in value:
             return "https://" + value
         return None
+
+    def _json_response(self, status: int, payload: Mapping[str, Any]) -> RouteResult:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": str(len(body)),
+        }
+        return RouteResult(status_code=status, body=body, headers=headers)
 
     def _text_response(self, status: int, message: str) -> RouteResult:
         body = message.encode("utf-8", errors="replace")
