@@ -549,7 +549,7 @@
           return;
         }
         const normalized = normalizeUrl(text);
-        window.location.href = `/${normalized}`;
+        window.location.href = `/${normalized}?entry=1`;
       };
 
       searchButton.addEventListener("click", openProxy);

@@ -133,6 +133,8 @@ class ContentFilter:
             return ContentCategory.IMAGE
         if suffix in _HTML_EXTENSIONS:
             return ContentCategory.HTML
+        # 拡張子なしはページ本体として扱う（bare domain/ディレクトリへのアクセスを阻害しない）
         if not suffix:
-            return ContentCategory.OTHER
+            return ContentCategory.HTML
+        # それ以外は Other とみなす
         return ContentCategory.OTHER
