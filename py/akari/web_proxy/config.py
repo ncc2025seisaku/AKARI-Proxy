@@ -66,6 +66,7 @@ def load_config(path: str | Path) -> WebProxyConfig:
         enable_js=_require_bool(filter_data, "enable_js", default=True),
         enable_css=_require_bool(filter_data, "enable_css", default=True),
         enable_img=_require_bool(filter_data, "enable_img", default=True),
+        enable_other=_require_bool(filter_data, "enable_other", default=True),
     )
 
     return WebProxyConfig(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
@@ -59,6 +60,7 @@ class ContentFilter:
 
     def __init__(self, settings: ContentFilterSettings):
         self._settings = settings
+        self._lock = threading.Lock()
 
     def evaluate(self, url: str) -> FilterDecision:
         """Check if the target URL should be proxied or blocked locally."""
@@ -83,13 +85,40 @@ class ContentFilter:
         )
 
     def _is_allowed(self, category: ContentCategory) -> bool:
+        settings = self._settings
         if category == ContentCategory.JAVASCRIPT:
-            return self._settings.enable_js
+            return settings.enable_js
         if category == ContentCategory.STYLESHEET:
-            return self._settings.enable_css
+            return settings.enable_css
         if category == ContentCategory.IMAGE:
-            return self._settings.enable_img
+            return settings.enable_img
+        if category == ContentCategory.OTHER:
+            return settings.enable_other
         return True
+
+    def snapshot(self) -> ContentFilterSettings:
+        """Return the current settings immutable snapshot."""
+        return self._settings
+
+    def update(
+        self,
+        *,
+        enable_js: bool | None = None,
+        enable_css: bool | None = None,
+        enable_img: bool | None = None,
+        enable_other: bool | None = None,
+    ) -> ContentFilterSettings:
+        """Update filter toggles atomically and return the new settings."""
+        with self._lock:
+            current = self._settings
+            new_settings = ContentFilterSettings(
+                enable_js=current.enable_js if enable_js is None else enable_js,
+                enable_css=current.enable_css if enable_css is None else enable_css,
+                enable_img=current.enable_img if enable_img is None else enable_img,
+                enable_other=current.enable_other if enable_other is None else enable_other,
+            )
+            self._settings = new_settings
+            return new_settings
 
     def _classify(self, url: str) -> ContentCategory:
         parsed = urlsplit(url)
@@ -102,6 +131,8 @@ class ContentFilter:
             return ContentCategory.STYLESHEET
         if suffix in _IMAGE_EXTENSIONS:
             return ContentCategory.IMAGE
-        if not suffix or suffix in _HTML_EXTENSIONS:
+        if suffix in _HTML_EXTENSIONS:
             return ContentCategory.HTML
+        if not suffix:
+            return ContentCategory.OTHER
         return ContentCategory.OTHER

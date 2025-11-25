@@ -16,6 +16,7 @@ class ContentFilterSettings:
     enable_js: bool = True
     enable_css: bool = True
     enable_img: bool = True
+    enable_other: bool = True
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ def load_config(path: str | Path) -> LocalProxyConfig:
         enable_js=_require_bool(filter_data, "enable_js", default=True),
         enable_css=_require_bool(filter_data, "enable_css", default=True),
         enable_img=_require_bool(filter_data, "enable_img", default=True),
+        enable_other=_require_bool(filter_data, "enable_other", default=True),
     )
     return LocalProxyConfig(content_filter=content_filter)
 

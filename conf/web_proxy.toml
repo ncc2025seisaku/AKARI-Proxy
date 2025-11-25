@@ -22,3 +22,4 @@ timeout = 2.0
 enable_js = true
 enable_css = true
 enable_img = true
+enable_other = true

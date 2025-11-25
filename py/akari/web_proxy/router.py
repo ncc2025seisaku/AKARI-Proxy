@@ -45,6 +45,8 @@ class WebRouter:
     def handle_get(self, path: str, headers: Mapping[str, str]) -> RouteResult:
         parsed = urlsplit(path)
         params = parse_qs(parsed.query)
+        if parsed.path == "/api/filter":
+            return self._handle_filter_get()
         if parsed.path in ("/proxy", "/api/proxy"):
             return self._handle_proxy(params, {}, {})
         if parsed.path in ("/", "", "/index.html"):
@@ -79,6 +81,9 @@ class WebRouter:
         if parsed.path in ("/", "/proxy", "/api/proxy"):
             query_params = parse_qs(parsed.query)
             return self._handle_proxy(query_params, form_params, json_payload)
+        if parsed.path == "/api/filter":
+            payload = json_payload or {k: v[0] for k, v in form_params.items() if v}
+            return self._handle_filter_update(payload)
         return RouteResult(status_code=404, body=b"Not Found", headers={"Content-Type": "text/plain; charset=utf-8"})
 
     # ------------------------------- proxy core -------------------------------
@@ -90,6 +95,39 @@ class WebRouter:
     ) -> RouteResult:
         raw_url = self._extract_url(form_params, json_payload, query_params)
         return self._execute_proxy(raw_url)
+
+    def _handle_filter_get(self) -> RouteResult:
+        current = self._content_filter.snapshot()
+        payload = {
+            "enable_js": current.enable_js,
+            "enable_css": current.enable_css,
+            "enable_img": current.enable_img,
+            "enable_other": current.enable_other,
+        }
+        return self._json_response(200, payload)
+
+    def _handle_filter_update(self, payload: Mapping[str, Any]) -> RouteResult:
+        try:
+            enable_js = self._coerce_bool(payload, "enable_js")
+            enable_css = self._coerce_bool(payload, "enable_css")
+            enable_img = self._coerce_bool(payload, "enable_img")
+            enable_other = self._coerce_bool(payload, "enable_other")
+        except ValueError as exc:
+            return self._json_response(400, {"error": str(exc)})
+
+        if enable_js is None and enable_css is None and enable_img is None and enable_other is None:
+            return self._json_response(400, {"error": "enable_js/enable_css/enable_img/enable_other のいずれかを指定してください。"})
+
+        updated = self._content_filter.update(
+            enable_js=enable_js, enable_css=enable_css, enable_img=enable_img, enable_other=enable_other
+        )
+        payload = {
+            "enable_js": updated.enable_js,
+            "enable_css": updated.enable_css,
+            "enable_img": updated.enable_img,
+            "enable_other": updated.enable_other,
+        }
+        return self._json_response(200, payload)
 
     def _handle_path_proxy(self, raw_path: str) -> RouteResult | None:
         candidate = raw_path.lstrip("/")
@@ -325,6 +363,23 @@ class WebRouter:
                     return candidate
         return ""
 
+    def _coerce_bool(self, payload: Mapping[str, Any], key: str) -> bool | None:
+        """Accepts bool, 0/1, or typical truthy strings. Missing -> None."""
+        if key not in payload:
+            return None
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in {"1", "true", "yes", "on"}:
+                return True
+            if val in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError(f\"{key} は true/false で指定してください。入力値: {value!r}\")
+
     def _normalize_user_input(self, value: str) -> str | None:
         if not value:
             return ""
@@ -333,6 +388,14 @@ class WebRouter:
         if "://" not in value and "." in value:
             return "https://" + value
         return None
+
+    def _json_response(self, status: int, payload: Mapping[str, Any]) -> RouteResult:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": str(len(body)),
+        }
+        return RouteResult(status_code=status, body=body, headers=headers)
 
     def _text_response(self, status: int, message: str) -> RouteResult:
         body = message.encode("utf-8", errors="replace")

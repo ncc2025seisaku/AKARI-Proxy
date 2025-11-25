@@ -7,3 +7,5 @@ enable_js = false
 enable_css = false
 # Image requests are allowed when true.
 enable_img = false
+# Other resources (no extension or non HTML/CSS/JS/IMG) are allowed when true.
+enable_other = false
