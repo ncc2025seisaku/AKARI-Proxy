@@ -234,14 +234,15 @@ class WebRouter:
                 u = urljoin(base_url, u)
             return self._proxy_base + u
 
-        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)=["\'])([^"\']+)')
+        # Allow whitespace/case variations around href/src attributes
+        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
 
         def attr_repl(m: re.Match) -> str:
             return f'{m.group("prefix")}{to_proxy(m.group(2))}'
 
         text = attr_pattern.sub(attr_repl, text)
 
-        srcset_pattern = re.compile(r'\bsrcset=["\']([^"\']+)["\']')
+        srcset_pattern = re.compile(r'\bsrcset\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 
         def srcset_repl(m: re.Match) -> str:
             parts = []
