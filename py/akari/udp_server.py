@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import logging
 import socket
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from akari_udp_py import (
     decode_packet_py,
     encode_error_py,
+    encode_error_v2_py,
     encode_response_first_chunk_py,
+    encode_response_first_chunk_v2_py,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -48,6 +51,12 @@ class AkariUdpServer:
         self.buffer_size = buffer_size
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
+        if os.name == "nt":
+            SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
+            try:
+                self._sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
+            except (OSError, ValueError):
+                LOGGER.warning("could not disable UDP connreset (Windows); continuing")
         if timeout is not None:
             self._sock.settimeout(timeout)
         self.address = self._sock.getsockname()
@@ -57,6 +66,9 @@ class AkariUdpServer:
 
         try:
             data, client_addr = self._sock.recvfrom(self.buffer_size)
+        except ConnectionResetError:
+            LOGGER.debug("recvfrom ConnectionResetError (possible ICMP port unreachable); ignoring")
+            return None
         except socket.timeout:
             return None
 
@@ -109,15 +121,29 @@ def encode_success_response(
 ) -> Sequence[bytes]:
     """リクエストに対する単一チャンクのレスポンスを組み立てる。"""
 
-    datagram = encode_response_first_chunk_py(
-        status_code,
-        len(body),
-        body,
-        request.header["message_id"],
-        seq_total,
-        request.header["timestamp"],
-        request.psk,
-    )
+    is_v2 = int(request.header.get("version", 1)) >= 2
+    if is_v2:
+        datagram = encode_response_first_chunk_v2_py(
+            status_code,
+            len(body),
+            b"",
+            body,
+            request.header["message_id"],
+            seq_total,
+            0,
+            request.header["timestamp"],
+            request.psk,
+        )
+    else:
+        datagram = encode_response_first_chunk_py(
+            status_code,
+            len(body),
+            body,
+            request.header["message_id"],
+            seq_total,
+            request.header["timestamp"],
+            request.psk,
+        )
     return (datagram,)
 
 
@@ -130,12 +156,23 @@ def encode_error_response(
 ) -> Sequence[bytes]:
     """リクエストに対するエラーを返すパケットを組み立てる。"""
 
-    datagram = encode_error_py(
-        error_code,
-        http_status,
-        message,
-        request.header["message_id"],
-        request.header["timestamp"],
-        request.psk,
-    )
+    is_v2 = int(request.header.get("version", 1)) >= 2
+    if is_v2:
+        datagram = encode_error_v2_py(
+            error_code,
+            http_status,
+            message,
+            request.header["message_id"],
+            request.header["timestamp"],
+            request.psk,
+        )
+    else:
+        datagram = encode_error_py(
+            error_code,
+            http_status,
+            message,
+            request.header["message_id"],
+            request.header["timestamp"],
+            request.psk,
+        )
     return (datagram,)

@@ -1,28 +1,18 @@
 use crate::error::AkariError;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 
 pub const HEADER_LEN: usize = 24;
-pub const CURRENT_VERSION: u8 = 0x01;
+pub const VERSION_V1: u8 = 0x01;
+pub const VERSION_V2: u8 = 0x02;
 const MAGIC: [u8; 2] = *b"AK";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
     Req = 0,
     Resp = 1,
-    Error = 2,
-}
-
-impl TryFrom<u8> for MessageType {
-    type Error = AkariError;
-
-    fn try_from(value: u8) -> Result<Self, <MessageType as TryFrom<u8>>::Error> {
-        match value {
-            0 => Ok(MessageType::Req),
-            1 => Ok(MessageType::Resp),
-            2 => Ok(MessageType::Error),
-            other => Err(AkariError::UnknownMessageType(other)),
-        }
-    }
+    Ack = 2,
+    Nack = 3,
+    Error = 4,
 }
 
 impl From<MessageType> for u8 {
@@ -70,11 +60,23 @@ impl Header {
             return Err(AkariError::InvalidMagic(magic));
         }
         let version = bytes[2];
-        if version != CURRENT_VERSION {
+        if version != VERSION_V1 && version != VERSION_V2 {
             return Err(AkariError::UnsupportedVersion(version));
         }
 
-        let message_type = MessageType::try_from(bytes[3])?;
+        let message_type = match (version, bytes[3]) {
+            (VERSION_V1, 0) => MessageType::Req,
+            (VERSION_V1, 1) => MessageType::Resp,
+            (VERSION_V1, 2) => MessageType::Error,
+            // 一部古い実装が v1 で type=4 を送ることがあるため互換で許容する
+            (VERSION_V1, 4) => MessageType::Error,
+            (VERSION_V2, 0) => MessageType::Req,
+            (VERSION_V2, 1) => MessageType::Resp,
+            (VERSION_V2, 2) => MessageType::Ack,
+            (VERSION_V2, 3) => MessageType::Nack,
+            (VERSION_V2, 4) => MessageType::Error,
+            (_, other) => return Err(AkariError::UnknownMessageType(other)),
+        };
         let flags = bytes[4];
         let reserved = bytes[5];
         let message_id = u64::from_be_bytes(bytes[6..14].try_into().unwrap());
