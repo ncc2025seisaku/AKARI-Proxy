@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin
 
 from akari.udp_client import AkariUdpClient, ResponseOutcome
 from .config import WebProxyConfig
@@ -45,6 +45,8 @@ class WebRouter:
     def handle_get(self, path: str, headers: Mapping[str, str]) -> RouteResult:
         parsed = urlsplit(path)
         params = parse_qs(parsed.query)
+        if parsed.path == "/api/filter":
+            return self._handle_filter_get()
         if parsed.path in ("/proxy", "/api/proxy"):
             return self._handle_proxy(params, {}, {})
         if parsed.path in ("/", "", "/index.html"):
@@ -53,7 +55,7 @@ class WebRouter:
                 return static
         if parsed.path == "/healthz":
             return RouteResult(status_code=200, body=b"ok", headers={"Content-Type": "text/plain; charset=utf-8"})
-        path_proxy = self._handle_path_proxy(parsed.path)
+        path_proxy = self._handle_path_proxy(parsed.path, params)
         if path_proxy:
             return path_proxy
         static = self._serve_static_asset(parsed.path)
@@ -79,6 +81,9 @@ class WebRouter:
         if parsed.path in ("/", "/proxy", "/api/proxy"):
             query_params = parse_qs(parsed.query)
             return self._handle_proxy(query_params, form_params, json_payload)
+        if parsed.path == "/api/filter":
+            payload = json_payload or {k: v[0] for k, v in form_params.items() if v}
+            return self._handle_filter_update(payload)
         return RouteResult(status_code=404, body=b"Not Found", headers={"Content-Type": "text/plain; charset=utf-8"})
 
     # ------------------------------- proxy core -------------------------------
@@ -89,30 +94,66 @@ class WebRouter:
         json_payload: Mapping[str, Any],
     ) -> RouteResult:
         raw_url = self._extract_url(form_params, json_payload, query_params)
-        return self._execute_proxy(raw_url)
+        skip_filter = bool(query_params.get("entry"))
+        return self._execute_proxy(raw_url, skip_filter=skip_filter)
 
-    def _handle_path_proxy(self, raw_path: str) -> RouteResult | None:
+    def _handle_filter_get(self) -> RouteResult:
+        current = self._content_filter.snapshot()
+        payload = {
+            "enable_js": current.enable_js,
+            "enable_css": current.enable_css,
+            "enable_img": current.enable_img,
+            "enable_other": current.enable_other,
+        }
+        return self._json_response(200, payload)
+
+    def _handle_filter_update(self, payload: Mapping[str, Any]) -> RouteResult:
+        try:
+            enable_js = self._coerce_bool(payload, "enable_js")
+            enable_css = self._coerce_bool(payload, "enable_css")
+            enable_img = self._coerce_bool(payload, "enable_img")
+            enable_other = self._coerce_bool(payload, "enable_other")
+        except ValueError as exc:
+            return self._json_response(400, {"error": str(exc)})
+
+        if enable_js is None and enable_css is None and enable_img is None and enable_other is None:
+            return self._json_response(400, {"error": "enable_js/enable_css/enable_img/enable_other のいずれかを指定してください。"})
+
+        updated = self._content_filter.update(
+            enable_js=enable_js, enable_css=enable_css, enable_img=enable_img, enable_other=enable_other
+        )
+        payload = {
+            "enable_js": updated.enable_js,
+            "enable_css": updated.enable_css,
+            "enable_img": updated.enable_img,
+            "enable_other": updated.enable_other,
+        }
+        return self._json_response(200, payload)
+
+    def _handle_path_proxy(self, raw_path: str, params: Mapping[str, list[str]]) -> RouteResult | None:
         candidate = raw_path.lstrip("/")
         if not candidate:
             return None
         url = unquote(candidate)
         if not url.startswith(("http://", "https://")):
             return None
-        return self._execute_proxy(url)
+        skip_filter = bool(params.get("entry"))
+        return self._execute_proxy(url, skip_filter=skip_filter)
 
-    def _execute_proxy(self, raw_url: str) -> RouteResult:
+    def _execute_proxy(self, raw_url: str, *, skip_filter: bool = False) -> RouteResult:
         if not raw_url:
             return self._text_response(400, "url パラメータを指定してください。")
         target_url = self._normalize_user_input(raw_url)
         if not target_url:
             return self._text_response(400, "HTTP/HTTPS の URL を指定してください。")
 
-        # content filter
-        decision: FilterDecision = self._content_filter.evaluate(target_url)
-        if decision.blocked:
-            headers = dict(decision.headers)
-            headers.setdefault("Content-Type", "text/plain; charset=utf-8")
-            return RouteResult(status_code=decision.status_code or 204, body=decision.body, headers=headers)
+        # content filter (skip when explicitly requested for entry navigation)
+        if not skip_filter:
+            decision: FilterDecision = self._content_filter.evaluate(target_url)
+            if decision.blocked:
+                headers = dict(decision.headers)
+                headers.setdefault("Content-Type", "text/plain; charset=utf-8")
+                return RouteResult(status_code=decision.status_code or 204, body=decision.body, headers=headers)
 
         try:
             outcome = self._fetch_via_udp(target_url)
@@ -129,10 +170,10 @@ class WebRouter:
         if not outcome.complete or outcome.body is None:
             return self._text_response(502, "レスポンスが揃いませんでした。")
 
-        return self._raw_response(target_url, outcome)
+        return self._raw_response(target_url, outcome, skip_filter=skip_filter)
 
     # ------------------------------- response shaping -------------------------------
-    def _raw_response(self, url: str, outcome: ResponseOutcome) -> RouteResult:
+    def _raw_response(self, url: str, outcome: ResponseOutcome, *, skip_filter: bool = False) -> RouteResult:
         body = outcome.body or b""
         headers = {
             "X-AKARI-Message-Id": f"0x{outcome.message_id:x}",
@@ -153,23 +194,24 @@ class WebRouter:
         body, decompressed = self._maybe_decompress(body, headers)
 
         content_type = headers.get("Content-Type", "").lower()
-        # レスポンス側フィルタ（Content-Typeベース）
-        blocked = self._apply_response_filter(content_type)
-        if blocked:
-            headers_filtered = {
-                "Content-Length": "0",
-                "Cache-Control": "no-cache",
-                "X-AKARI-Filtered": blocked.value,
-            }
-            headers_filtered.setdefault("Content-Type", "text/plain; charset=utf-8")
-            return RouteResult(
-                status_code=204,
-                body=b"",
-                headers=headers_filtered,
-            )
+        # レスポンス側フィルタ（Content-Typeベース）: entry=1 のリクエストはスキップ
+        if not skip_filter:
+            blocked = self._apply_response_filter(content_type)
+            if blocked:
+                headers_filtered = {
+                    "Content-Length": "0",
+                    "Cache-Control": "no-cache",
+                    "X-AKARI-Filtered": blocked.value,
+                }
+                headers_filtered.setdefault("Content-Type", "text/plain; charset=utf-8")
+                return RouteResult(
+                    status_code=204,
+                    body=b"",
+                    headers=headers_filtered,
+                )
 
         if content_type.startswith("text/html") and decompressed:
-            body = self._rewrite_html_to_proxy(body)
+            body = self._rewrite_html_to_proxy(body, url)
         headers["Content-Length"] = str(len(body))
         status_code = int(outcome.status_code or 200)
         return RouteResult(status_code=status_code, body=body, headers=headers)
@@ -177,22 +219,30 @@ class WebRouter:
     # ---------------------------------------------------------------------------
     # HTML rewrite: absolute URLs -> proxy pass
     # ---------------------------------------------------------------------------
-    def _rewrite_html_to_proxy(self, body: bytes) -> bytes:
+    def _rewrite_html_to_proxy(self, body: bytes, source_url: str) -> bytes:
         text = body.decode("utf-8", errors="replace")
+        base_url = source_url
 
         def to_proxy(u: str) -> str:
+            # ignore schemes that should not be proxied
+            if not u or u.startswith(("data:", "javascript:", "mailto:", "#")):
+                return u
             if u.startswith("//"):
                 u = "https:" + u
+            # resolve relative path against the source page URL
+            if base_url:
+                u = urljoin(base_url, u)
             return self._proxy_base + u
 
-        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)=["\'])(https?://[^"\']+)')
+        # Allow whitespace/case variations around href/src attributes
+        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
 
         def attr_repl(m: re.Match) -> str:
             return f'{m.group("prefix")}{to_proxy(m.group(2))}'
 
         text = attr_pattern.sub(attr_repl, text)
 
-        srcset_pattern = re.compile(r'\bsrcset=["\']([^"\']+)["\']')
+        srcset_pattern = re.compile(r'\bsrcset\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
 
         def srcset_repl(m: re.Match) -> str:
             parts = []
@@ -205,8 +255,7 @@ class WebRouter:
                     continue
                 url = tokens[0]
                 rest = " ".join(tokens[1:])
-                if url.startswith("http"):
-                    url = to_proxy(url)
+                url = to_proxy(url)
                 parts.append(" ".join([url, rest]).strip())
             return f'srcset="{", ".join(parts)}"'
 
@@ -325,6 +374,23 @@ class WebRouter:
                     return candidate
         return ""
 
+    def _coerce_bool(self, payload: Mapping[str, Any], key: str) -> bool | None:
+        """Accepts bool, 0/1, or typical truthy strings. Missing -> None."""
+        if key not in payload:
+            return None
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in {"1", "true", "yes", "on"}:
+                return True
+            if val in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError(f"{key} は true/false で指定してください。入力値: {value!r}")
+
     def _normalize_user_input(self, value: str) -> str | None:
         if not value:
             return ""
@@ -333,6 +399,14 @@ class WebRouter:
         if "://" not in value and "." in value:
             return "https://" + value
         return None
+
+    def _json_response(self, status: int, payload: Mapping[str, Any]) -> RouteResult:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": str(len(body)),
+        }
+        return RouteResult(status_code=status, body=body, headers=headers)
 
     def _text_response(self, status: int, message: str) -> RouteResult:
         body = message.encode("utf-8", errors="replace")
