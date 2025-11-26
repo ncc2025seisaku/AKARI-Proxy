@@ -1,4 +1,4 @@
-"""ローカルプロキシがプロキシ側 UDP パケットを送受信するクライアント。"""
+"""AKARI-UDP client used by the local proxy to talk to the remote proxy."""
 
 from __future__ import annotations
 
@@ -141,21 +141,24 @@ def decode_header_block(block: bytes) -> dict[str, str]:
 
 
 class AkariUdpClient:
-    """AKARI-UDP リクエストをリモートプロキシへ送信し、レスポンス/エラーを収集する。"""
+    """Send AKARI-UDP requests to a remote proxy and gather responses."""
 
     def __init__(
         self,
         remote_addr: tuple[str, int],
         psk: bytes,
         *,
-        timeout: float = 2.0,
+        timeout: float | None = None,
         buffer_size: int = 65535,
         protocol_version: int = 2,
+        max_nack_rounds: int = 3,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
+        # timeout は無視するが、後方互換のため受け取る
         self._timeout = timeout
         self._buffer_size = buffer_size
+        self._max_nack_rounds = max(0, int(max_nack_rounds))
         self._version = protocol_version
 
     def send_request(
@@ -166,7 +169,7 @@ class AkariUdpClient:
         *,
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
-        """Request を送信し、resp/error を受信しきる。"""
+        """Send a request and wait for resp/error. timeout=None means wait indefinitely."""
 
         if datagram is None:
             if self._version >= 2:
@@ -177,35 +180,19 @@ class AkariUdpClient:
         packets: list[Mapping[str, Any]] = []
         accumulator = ResponseAccumulator(message_id)
         error_payload: Mapping[str, Any] | None = None
-        timed_out = False
         bytes_sent = len(datagram)
         bytes_received = 0
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(self._timeout)
+            sock.settimeout(None)
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
-
-            nack_sent = False
+            nacks_sent = 0
             while True:
-                remaining = self._timeout - (time.monotonic() - last_received)
-                if remaining <= 0:
-                    if self._version >= 2 and accumulator.seq_total and not accumulator.complete and not nack_sent:
-                        missing_bitmap = self._build_missing_bitmap(accumulator)
-                        if missing_bitmap:
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            nack_sent = True
-                            last_received = time.monotonic()
-                            continue
-                    timed_out = True
-                    break
-                sock.settimeout(remaining)
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
-                    timed_out = True
-                    break
+                    continue
 
                 bytes_received += len(data)
                 parsed = decode_packet_py(data, self._psk)
@@ -229,6 +216,17 @@ class AkariUdpClient:
                     accumulator.add_chunk(parsed)
                     if accumulator.complete:
                         break
+                    if (
+                        self._version >= 2
+                        and nacks_sent < self._max_nack_rounds
+                        and accumulator.seq_total is not None
+                        and payload.get("seq") is not None
+                    ):
+                        missing_bitmap = self._build_missing_bitmap(accumulator)
+                        if missing_bitmap:
+                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            sock.sendto(nack, self._remote_addr)
+                            nacks_sent += 1
                 elif packet_type == "error":
                     error_payload = parsed["payload"]
                     break
@@ -242,7 +240,7 @@ class AkariUdpClient:
             headers=accumulator.headers,
             error=error_payload,
             complete=accumulator.complete,
-            timed_out=timed_out,
+            timed_out=False,
             bytes_sent=bytes_sent,
             bytes_received=bytes_received,
         )
