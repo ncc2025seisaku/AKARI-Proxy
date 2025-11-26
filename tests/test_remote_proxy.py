@@ -17,7 +17,9 @@ from akari.remote_proxy.handler import (
     ERROR_UPSTREAM_FAILURE,
     FIRST_CHUNK_CAPACITY,
     MTU_PAYLOAD_SIZE,
-    clear_caches,
+    RESP_CACHE,
+    _handle_nack,
+    _encode_success_datagrams,
     handle_request,
 )
 from akari.remote_proxy.http_client import (
@@ -26,7 +28,7 @@ from akari.remote_proxy.http_client import (
     InvalidURLError,
     TimeoutFetchError,
 )
-from akari.udp_client import _to_native
+from akari.udp_client import AkariUdpClient as AkariUdpClientClass, ResponseAccumulator, _to_native
 from akari.udp_server import AkariUdpServer, IncomingRequest
 from akari_udp_py import decode_packet_py
 
@@ -34,12 +36,9 @@ from akari_udp_py import decode_packet_py
 class RemoteProxyHandlerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"
 
-    def setUp(self) -> None:
-        clear_caches()
-
-    def _make_request(self, *, url: str = "https://example.com", message_id: int = 0x1234) -> IncomingRequest:
+    def _make_request(self, *, url: str = "https://example.com", version: int = 2) -> IncomingRequest:
         return IncomingRequest(
-            header={"message_id": message_id, "timestamp": 0x55},
+            header={"message_id": 0x1234, "timestamp": 0x55, "version": version},
             payload={"url": url},
             packet_type="req",
             addr=("127.0.0.1", 9000),
@@ -51,6 +50,9 @@ class RemoteProxyHandlerTest(unittest.TestCase):
     def _decode(self, datagram: bytes) -> dict:
         parsed = decode_packet_py(bytes(datagram), self.PSK)
         return _to_native(parsed)
+
+    def tearDown(self) -> None:
+        RESP_CACHE.clear()
 
     def test_handle_request_splits_body_into_multiple_chunks(self) -> None:
         body = b"A" * (FIRST_CHUNK_CAPACITY + MTU_PAYLOAD_SIZE + 10)
@@ -124,38 +126,31 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         self.assertEqual(payload["http_status"], 500)
         self.assertEqual(payload["message"], "internal server error")
 
-    def test_handle_request_uses_http_cache(self) -> None:
-        body = b"cached-body"
-        response = {"status_code": 200, "headers": {"Cache-Control": "max-age=60"}, "body": body}
+    def test_handle_nack_resends_requested_sequences(self) -> None:
+        body = b"A" * (FIRST_CHUNK_CAPACITY + MTU_PAYLOAD_SIZE + 5)
+        response = {"status_code": 200, "headers": {}, "body": body}
 
-        with patch("akari.remote_proxy.handler.fetch", return_value=response) as mock_fetch:
-            first = handle_request(self._make_request(url="https://example.com/cache", message_id=0x1))
-            self.assertTrue(mock_fetch.called)
-            mock_fetch.reset_mock()
-            second = handle_request(self._make_request(url="https://example.com/cache", message_id=0x2))
-            mock_fetch.assert_not_called()
+        request = self._make_request()
+        request.header["version"] = 2
 
-        self.assertTrue(first)
-        parsed_packets = [self._decode(datagram) for datagram in second]
-        assembled = b"".join(packet["payload"]["chunk"] for packet in parsed_packets)
-        self.assertEqual(assembled, body)
+        with patch("akari.remote_proxy.handler._now_timestamp", return_value=0x77):
+            datagrams = _encode_success_datagrams(request, response)
 
-    def test_handle_request_respects_no_store(self) -> None:
-        response = {"status_code": 200, "headers": {"Cache-Control": "no-store"}, "body": b"ng"}
+        nack_request = self._make_request()
+        nack_request.packet_type = "nack"
+        nack_request.payload = {"bitmap": bytes([0b00000110])}
 
-        with patch("akari.remote_proxy.handler.fetch", return_value=response) as mock_fetch:
-            handle_request(self._make_request(url="https://example.com/no-store", message_id=0x10))
-            handle_request(self._make_request(url="https://example.com/no-store", message_id=0x11))
+        resent = _handle_nack(nack_request)
 
-        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertEqual(resent, list(datagrams[1:3]))
 
 
 class RemoteProxyServerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"
     URL = "https://example.com/ok"
 
-    def setUp(self) -> None:
-        clear_caches()
+    def tearDown(self) -> None:
+        RESP_CACHE.clear()
 
     def _run_server(self) -> tuple[AkariUdpServer, threading.Thread]:
         server = AkariUdpServer("127.0.0.1", 0, self.PSK, handle_request, timeout=2.0)
@@ -197,3 +192,31 @@ class RemoteProxyServerTest(unittest.TestCase):
         self.assertIsNotNone(outcome.error)
         self.assertEqual(outcome.error["error_code"], ERROR_TIMEOUT)
         self.assertEqual(outcome.error["http_status"], 504)
+
+
+class UdpClientRetransmissionTest(unittest.TestCase):
+    def test_build_missing_bitmap_sets_bits_for_missing_sequences(self) -> None:
+        acc = ResponseAccumulator(message_id=1)
+        acc.seq_total = 5
+        acc.chunks = {0: b"a", 2: b"b", 4: b"c"}
+
+        client = AkariUdpClientClass(("127.0.0.1", 9999), b"psk", timeout=0.1)
+        bitmap = client._build_missing_bitmap(acc)
+
+        self.assertEqual(bitmap, b"\x0a")
+
+    def test_build_missing_bitmap_returns_empty_when_complete(self) -> None:
+        acc = ResponseAccumulator(message_id=1)
+        acc.seq_total = 2
+        acc.chunks = {0: b"a", 1: b"b"}
+
+        client = AkariUdpClientClass(("127.0.0.1", 9999), b"psk", timeout=0.1)
+
+        self.assertEqual(client._build_missing_bitmap(acc), b"")
+
+    def test_build_missing_bitmap_returns_empty_without_seq_total(self) -> None:
+        acc = ResponseAccumulator(message_id=1)
+
+        client = AkariUdpClientClass(("127.0.0.1", 9999), b"psk", timeout=0.1)
+
+        self.assertEqual(client._build_missing_bitmap(acc), b"")

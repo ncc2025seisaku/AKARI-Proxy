@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 from typing import Iterable, Sequence
 
 from akari_udp_py import (
@@ -42,8 +43,7 @@ ERROR_UNSUPPORTED_PACKET = 254
 # 簡易キャッシュ: message_id -> (timestamp, [datagrams])
 RESP_CACHE_TTL = 5.0
 RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
-HTTP_CACHE_DEFAULT_TTL = 30.0
-HTTP_CACHE: dict[str, tuple[float, HttpResponse]] = {}
+RESP_CACHE_LOCK = threading.RLock()
 
 
 def _now_timestamp() -> int:
@@ -236,9 +236,10 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                 )
             )
 
-    # Cache datagrams for possible resend
-    RESP_CACHE[message_id] = (time.time(), datagrams)
-    _purge_resp_cache()
+    # キャッシュして再送に備える
+    with RESP_CACHE_LOCK:
+        RESP_CACHE[message_id] = (time.time(), datagrams)
+        _purge_cache()
     return datagrams
 
 
@@ -282,8 +283,9 @@ def _encode_error(
 
 def _handle_nack(request: IncomingRequest) -> Sequence[bytes]:
     message_id = request.header.get("message_id")
-    if message_id not in RESP_CACHE:
-        return ()
+    with RESP_CACHE_LOCK:
+        if message_id not in RESP_CACHE:
+            return ()
     bitmap = request.payload.get("bitmap")
     if not isinstance(bitmap, (bytes, bytearray)):
         return ()
@@ -309,9 +311,10 @@ def _bitmap_to_seq(bitmap: bytes) -> list[int]:
 
 def _purge_resp_cache() -> None:
     now = time.time()
-    expired = [mid for mid, (ts, _) in RESP_CACHE.items() if now - ts > RESP_CACHE_TTL]
-    for mid in expired:
-        RESP_CACHE.pop(mid, None)
+    with RESP_CACHE_LOCK:
+        expired = [mid for mid, (ts, _) in RESP_CACHE.items() if now - ts > RESP_CACHE_TTL]
+        for mid in expired:
+            RESP_CACHE.pop(mid, None)
 
 
 def clear_caches() -> None:
