@@ -105,17 +105,27 @@ def _purge_http_cache(now: float | None = None) -> None:
                 HTTP_CACHE.pop(url, None)
 
 
-def _get_cached_http_response(url: str, *, now: float | None = None) -> HttpResponse | None:
+def _get_http_cache_entry(
+    url: str, *, now: float | None = None, allow_expired: bool = False
+) -> tuple[float, HttpResponse] | None:
     now = now or time.time()
     with HTTP_CACHE_LOCK:
         cached = HTTP_CACHE.get(url)
         if not cached:
             return None
         expires_at, response = cached
-        if expires_at <= now:
+        if expires_at <= now and not allow_expired:
             HTTP_CACHE.pop(url, None)
             return None
-        return _clone_response(response)
+        return expires_at, _clone_response(response)
+
+
+def _get_cached_http_response(url: str, *, now: float | None = None) -> HttpResponse | None:
+    entry = _get_http_cache_entry(url, now=now, allow_expired=False)
+    if entry is None:
+        return None
+    _, response = entry
+    return response
 
 
 def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | None = None) -> None:
@@ -129,6 +139,19 @@ def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | No
     with HTTP_CACHE_LOCK:
         HTTP_CACHE[url] = (expires_at, _clone_response(response))
         _purge_http_cache(now=now)
+
+
+def _build_conditional_headers(cached: HttpResponse | None) -> dict[str, str]:
+    if not cached:
+        return {}
+    headers = cached.get("headers", {})
+    normalized = {key.lower(): value for key, value in headers.items()}
+    out: dict[str, str] = {}
+    if etag := normalized.get("etag"):
+        out["If-None-Match"] = etag
+    if last_modified := normalized.get("last-modified"):
+        out["If-Modified-Since"] = last_modified
+    return out
 
 
 def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
@@ -374,14 +397,18 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
     )
 
     now = time.time()
+    cache_entry = _get_http_cache_entry(normalized_url, now=now, allow_expired=True)
     _purge_http_cache(now=now)
-    cached_response = _get_cached_http_response(normalized_url, now=now)
-    if cached_response is not None:
+    cached_response = cache_entry[1] if cache_entry else None
+    expires_at = cache_entry[0] if cache_entry else None
+    if cache_entry and expires_at is not None and expires_at > now:
         LOGGER.info("serve cached response message_id=%s url=%s", request.header.get("message_id"), normalized_url)
         return _encode_success_datagrams(request, cached_response)
 
+    conditional_headers = _build_conditional_headers(cached_response)
+
     try:
-        response = fetch(normalized_url)
+        response = fetch(normalized_url, conditional_headers=conditional_headers)
     except InvalidURLError as exc:
         return _encode_error(
             request,
@@ -418,6 +445,22 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             http_status=500,
             message="internal server error",
         )
+
+    if response.get("status_code") == 304:
+        if cached_response is None:
+            return _encode_error(
+                request,
+                error_code=ERROR_UNEXPECTED,
+                http_status=500,
+                message="cache missing for 304 revalidation",
+            )
+        merged_headers = dict(cached_response.get("headers", {}))
+        merged_headers.update(response.get("headers", {}))
+        response = {
+            "status_code": cached_response.get("status_code", 200),
+            "headers": merged_headers,
+            "body": cached_response.get("body", b""),
+        }
 
     LOGGER.info(
         "success fetch message_id=%s status=%s body_len=%s",

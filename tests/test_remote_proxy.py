@@ -202,6 +202,38 @@ class HttpCacheTest(unittest.TestCase):
         assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
         self.assertEqual(assembled, second["body"])
 
+    def test_revalidate_with_etag_and_last_modified(self) -> None:
+        first = {
+            "status_code": 200,
+            "headers": {"cache-control": "max-age=1", "ETag": "abc", "Last-Modified": "Wed, 01 Jan 2020 00:00:00 GMT"},
+            "body": b"v1",
+        }
+        calls: list[dict | None] = []
+
+        def fake_fetch(url: str, **kwargs):
+            calls.append(kwargs.get("conditional_headers"))
+            if len(calls) == 1:
+                return first
+            return {"status_code": 304, "headers": {"Date": "Thu"}, "body": b""}
+
+        with patch("akari.remote_proxy.handler.fetch", side_effect=fake_fetch), patch(
+            "akari.remote_proxy.handler.time.time", return_value=1000.0
+        ):
+            handle_request(self._make_request())
+
+        with patch("akari.remote_proxy.handler.fetch", side_effect=fake_fetch), patch(
+            "akari.remote_proxy.handler.time.time", return_value=1003.0
+        ):
+            datagrams = handle_request(self._make_request())
+
+        # first call without validators, second call should include them
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], {})
+        self.assertEqual(calls[1], {"If-None-Match": "abc", "If-Modified-Since": "Wed, 01 Jan 2020 00:00:00 GMT"})
+
+        assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
+        self.assertEqual(assembled, first["body"])
+
 
 class RemoteProxyServerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"

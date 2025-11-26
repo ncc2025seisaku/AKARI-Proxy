@@ -1,25 +1,24 @@
-"""HTTP/HTTPSレスポンス取得ロジック.
+"""HTTP/HTTPS????????????
 
-`docs/AKARI.md` と `docs/architecture.md` で記載された「外部プロキシが
-HTTPクライアントとしてWebサイトへアクセスし、レスポンスを取得する」責務の
-うち、URL取得部分だけを初心者でもすぐ使えるように切り出している。
+`docs/AKARI.md` ? `docs/architecture.md` ???????????
+HTTP?????????Web???????????????????????
 """
 
 from __future__ import annotations
 
 import socket
-from typing import TypedDict
+from typing import Mapping, TypedDict
 from urllib import error, parse, request
 
 DEFAULT_TIMEOUT = 10.0
 MAX_BODY_BYTES = 1_000_000
 USER_AGENT = "AKARI-Proxy/0.1"
-# Prefer Brotli for効率, fallback to gzip/deflate.
+# Prefer Brotli for??, fallback to gzip/deflate.
 ACCEPT_ENCODING = "br, gzip, deflate"
 
 
 class HttpResponse(TypedDict):
-    """外部プロキシが AKARI-UDP に返却する前の素のレスポンス情報。"""
+    """????? AKARI-UDP ?????HTTP??????"""
 
     status_code: int
     headers: dict[str, str]
@@ -27,28 +26,28 @@ class HttpResponse(TypedDict):
 
 
 class FetchError(Exception):
-    """取得失敗時の基底例外。"""
+    """??????????"""
 
 
 class InvalidURLError(FetchError):
-    """HTTP/HTTPS以外やフォーマット不備を知らせる例外。"""
+    """HTTP/HTTPS???????????????"""
 
     def __init__(self, url: str) -> None:
-        super().__init__(f"サポート外か不正なURLです: {url!r}")
+        super().__init__(f"????????URL??: {url!r}")
 
 
 class BodyTooLargeError(FetchError):
-    """レスポンスボディが許容サイズを超えた場合に送出される。"""
+    """?????????????????????????"""
 
     def __init__(self, limit: int) -> None:
-        super().__init__(f"レスポンスボディが{limit}バイトの上限を超えました")
+        super().__init__(f"?????????{limit}????????????")
 
 
 class TimeoutFetchError(FetchError):
-    """タイムアウト時の例外。"""
+    """???????????"""
 
     def __init__(self, timeout: float) -> None:
-        super().__init__(f"{timeout}秒以内にレスポンスを受信できませんでした")
+        super().__init__(f"{timeout}?????????????????????")
 
 
 def _normalize_url(url: str) -> str:
@@ -69,23 +68,22 @@ def fetch(
     *,
     timeout: float = DEFAULT_TIMEOUT,
     max_bytes: int = MAX_BODY_BYTES,
+    conditional_headers: Mapping[str, str] | None = None,
 ) -> HttpResponse:
-    """URLにGETアクセスしてレスポンスを返す。
-
-    Args:
-        url: 取得したいHTTP/HTTPS URL。
-        timeout: 秒単位のタイムアウト。docs/architecture.mdの推奨値に合わせ5秒既定。
-        max_bytes: ボディ取得の安全上限。超過時は BodyTooLargeError を送出。
-    """
+    """URL?GET???????????304??????????"""
 
     normalized_url = _normalize_url(url)
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept-Encoding": ACCEPT_ENCODING,
+    }
+    if conditional_headers:
+        headers.update(conditional_headers)
+
     req = request.Request(
         normalized_url,
         method="GET",
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept-Encoding": ACCEPT_ENCODING,
-        },
+        headers=headers,
     )
 
     try:
@@ -101,7 +99,14 @@ def fetch(
                 "body": body,
             }
     except error.HTTPError as exc:
-        raise FetchError(f"HTTPエラー {exc.code}: {exc.reason}") from exc
+        if exc.code == 304:
+            headers = {key: value for key, value in exc.headers.items()} if exc.headers else {}
+            return {
+                "status_code": exc.code,
+                "headers": headers,
+                "body": b"",
+            }
+        raise FetchError(f"HTTP error {exc.code}: {exc.reason}") from exc
     except socket.timeout as exc:
         raise TimeoutFetchError(timeout) from exc
     except error.URLError as exc:
