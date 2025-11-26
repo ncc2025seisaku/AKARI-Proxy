@@ -68,6 +68,8 @@ impl Header {
             (VERSION_V1, 0) => MessageType::Req,
             (VERSION_V1, 1) => MessageType::Resp,
             (VERSION_V1, 2) => MessageType::Error,
+            // 一部古い実装が v1 で type=4 を送ることがあるため互換で許容する
+            (VERSION_V1, 4) => MessageType::Error,
             (VERSION_V2, 0) => MessageType::Req,
             (VERSION_V2, 1) => MessageType::Resp,
             (VERSION_V2, 2) => MessageType::Ack,

@@ -17,6 +17,7 @@ from akari.remote_proxy.handler import (
     ERROR_UPSTREAM_FAILURE,
     FIRST_CHUNK_CAPACITY,
     MTU_PAYLOAD_SIZE,
+    clear_caches,
     handle_request,
 )
 from akari.remote_proxy.http_client import (
@@ -33,9 +34,12 @@ from akari_udp_py import decode_packet_py
 class RemoteProxyHandlerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"
 
-    def _make_request(self, *, url: str = "https://example.com") -> IncomingRequest:
+    def setUp(self) -> None:
+        clear_caches()
+
+    def _make_request(self, *, url: str = "https://example.com", message_id: int = 0x1234) -> IncomingRequest:
         return IncomingRequest(
-            header={"message_id": 0x1234, "timestamp": 0x55},
+            header={"message_id": message_id, "timestamp": 0x55},
             payload={"url": url},
             packet_type="req",
             addr=("127.0.0.1", 9000),
@@ -120,10 +124,38 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         self.assertEqual(payload["http_status"], 500)
         self.assertEqual(payload["message"], "internal server error")
 
+    def test_handle_request_uses_http_cache(self) -> None:
+        body = b"cached-body"
+        response = {"status_code": 200, "headers": {"Cache-Control": "max-age=60"}, "body": body}
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=response) as mock_fetch:
+            first = handle_request(self._make_request(url="https://example.com/cache", message_id=0x1))
+            self.assertTrue(mock_fetch.called)
+            mock_fetch.reset_mock()
+            second = handle_request(self._make_request(url="https://example.com/cache", message_id=0x2))
+            mock_fetch.assert_not_called()
+
+        self.assertTrue(first)
+        parsed_packets = [self._decode(datagram) for datagram in second]
+        assembled = b"".join(packet["payload"]["chunk"] for packet in parsed_packets)
+        self.assertEqual(assembled, body)
+
+    def test_handle_request_respects_no_store(self) -> None:
+        response = {"status_code": 200, "headers": {"Cache-Control": "no-store"}, "body": b"ng"}
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=response) as mock_fetch:
+            handle_request(self._make_request(url="https://example.com/no-store", message_id=0x10))
+            handle_request(self._make_request(url="https://example.com/no-store", message_id=0x11))
+
+        self.assertEqual(mock_fetch.call_count, 2)
+
 
 class RemoteProxyServerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"
     URL = "https://example.com/ok"
+
+    def setUp(self) -> None:
+        clear_caches()
 
     def _run_server(self) -> tuple[AkariUdpServer, threading.Thread]:
         server = AkariUdpServer("127.0.0.1", 0, self.PSK, handle_request, timeout=2.0)
