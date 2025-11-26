@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""AKARI-UDP の災害時想定ストレステストツール."""
+"""Ad-hoc load tester for the AKARI UDP proxy.
+
+This script stays self contained so it can live outside production paths.
+It spins a pool of worker threads that drive the proxy via AkariUdpClient,
+optionally adding packet loss/jitter to emulate harsh networks.
+"""
 
 from __future__ import annotations
 
@@ -19,18 +24,12 @@ from typing import Iterable, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py"))
 
-from akari.remote_proxy.handler import ERROR_TIMEOUT
-from akari.udp_client import AkariUdpClient, ResponseAccumulator, ResponseOutcome, _to_native
-from akari.udp_server import AkariUdpServer, IncomingRequest, encode_error_response, encode_success_response
-from akari_udp_py import (
-    decode_packet_py,
-    encode_ack_v2_py,
-    encode_nack_v2_py,
-    encode_request_py,
-    encode_request_v2_py,
-)
+from akari.remote_proxy.handler import ERROR_TIMEOUT  # noqa: E402
+from akari.udp_client import AkariUdpClient, ResponseAccumulator, ResponseOutcome  # noqa: E402
+from akari.udp_server import AkariUdpServer, IncomingRequest, encode_error_response, encode_success_response  # noqa: E402
+from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py, encode_request_v2_py  # noqa: E402
 
-LOGGER = logging.getLogger("akari.stress")
+LOGGER = logging.getLogger("akari.loadtest")
 
 
 def parse_psk(value: str, *, hex_mode: bool) -> bytes:
@@ -49,13 +48,14 @@ def normalize_object(value: object) -> object:
     return value
 
 
-class LossyAkariClient(AkariUdpClient):
-    """Base client に受信ドロップ・ジッターを足した版."""
+class LoadTestClient(AkariUdpClient):
+    """AkariUdpClient with timeout/loss/jitter controls for load testing."""
 
     def __init__(self, *args, loss_rate: float = 0.0, jitter: float = 0.0, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._loss_rate = max(0.0, min(1.0, loss_rate))
         self._jitter = max(0.0, jitter)
+        self._timeout = kwargs.get("timeout") or 3.0
 
     def send_request(  # type: ignore[override]
         self,
@@ -82,21 +82,11 @@ class LossyAkariClient(AkariUdpClient):
             sock.settimeout(self._timeout)
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
+            nack_sent = 0
 
-            nack_sent = False
             while True:
                 remaining = self._timeout - (time.monotonic() - last_received)
                 if remaining <= 0:
-                    if self._version >= 2 and accumulator.seq_total and not accumulator.complete and not nack_sent:
-                        missing_bitmap = self._build_missing_bitmap(accumulator)
-                        if missing_bitmap:
-                            if self._jitter:
-                                time.sleep(random.uniform(0, self._jitter))
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            nack_sent = True
-                            last_received = time.monotonic()
-                            continue
                     timed_out = True
                     break
                 sock.settimeout(remaining)
@@ -107,15 +97,14 @@ class LossyAkariClient(AkariUdpClient):
                     break
 
                 if self._loss_rate and random.random() < self._loss_rate:
-                    LOGGER.debug("drop packet for message_id=%s", message_id)
+                    LOGGER.debug("drop packet message_id=%s", message_id)
                     continue
-
                 bytes_received += len(data)
                 if self._jitter:
                     time.sleep(random.uniform(0, self._jitter))
+
                 parsed = decode_packet_py(data, self._psk)
-                native = _to_native(parsed)
-                packets.append(native)
+                packets.append(normalize_object(parsed))
                 last_received = time.monotonic()
                 payload = parsed.get("payload", {})
                 chunk = payload.get("chunk")
@@ -134,6 +123,17 @@ class LossyAkariClient(AkariUdpClient):
                     accumulator.add_chunk(parsed)
                     if accumulator.complete:
                         break
+                    if (
+                        self._version >= 2
+                        and accumulator.seq_total is not None
+                        and payload.get("seq") is not None
+                        and nack_sent < self._max_nack_rounds
+                    ):
+                        missing_bitmap = self._build_missing_bitmap(accumulator)
+                        if missing_bitmap:
+                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            sock.sendto(nack, self._remote_addr)
+                            nack_sent += 1
                 elif packet_type == "error":
                     error_payload = parsed["payload"]
                     break
@@ -154,7 +154,7 @@ class LossyAkariClient(AkariUdpClient):
 
 
 @dataclass
-class StressCounters:
+class Counters:
     success: int = 0
     timeout: int = 0
     error: int = 0
@@ -164,10 +164,10 @@ class StressCounters:
     exceptions: int = 0
 
 
-class ResultAggregator:
+class Aggregator:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._counters = StressCounters()
+        self._counters = Counters()
 
     def add(self, outcome: ResponseOutcome, elapsed: float) -> None:
         with self._lock:
@@ -180,6 +180,7 @@ class ResultAggregator:
                 self._counters.error += 1
             self._counters.bytes_sent += outcome.bytes_sent
             self._counters.bytes_received += outcome.bytes_received
+
     def add_exception(self, *, bytes_sent: int = 0, bytes_received: int = 0) -> None:
         with self._lock:
             self._counters.error += 1
@@ -187,9 +188,9 @@ class ResultAggregator:
             self._counters.bytes_sent += bytes_sent
             self._counters.bytes_received += bytes_received
 
-    def snapshot(self) -> StressCounters:
+    def snapshot(self) -> Counters:
         with self._lock:
-            copy = StressCounters(
+            copy = Counters(
                 success=self._counters.success,
                 timeout=self._counters.timeout,
                 error=self._counters.error,
@@ -202,7 +203,7 @@ class ResultAggregator:
 
 
 class DemoServer:
-    """単純に body を返す UDP サーバ (テスト環境用)."""
+    """Small UDP responder to avoid touching real endpoints while testing."""
 
     def __init__(self, host: str, port: int, psk: bytes, body: bytes, timeout: float) -> None:
         self._server = AkariUdpServer(host, port, psk, self._handler, timeout=timeout)
@@ -233,19 +234,66 @@ class DemoServer:
         return encode_success_response(request, self._body, status_code=200, seq_total=1)
 
 
+class LogWriter:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, obj: dict[str, object]) -> None:
+        line = json.dumps(obj, ensure_ascii=False)
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as fp:
+                fp.write(line + "\n")
+
+
+def percentile(values: list[float], p: float) -> float:
+    if not values:
+        return 0.0
+    values = sorted(values)
+    k = max(int(len(values) * p) - 1, 0)
+    return values[k]
+
+
+def summarize(counters: Counters, elapsed: float, total_requests: int) -> dict[str, object]:
+    avg = sum(counters.latencies) / len(counters.latencies) if counters.latencies else 0.0
+    return {
+        "success": counters.success,
+        "timeout": counters.timeout,
+        "error": counters.error,
+        "exceptions": counters.exceptions,
+        "bytes_sent": counters.bytes_sent,
+        "bytes_received": counters.bytes_received,
+        "latency_avg_sec": round(avg, 4),
+        "latency_p95_sec": round(percentile(counters.latencies, 0.95), 4),
+        "latency_p99_sec": round(percentile(counters.latencies, 0.99), 4),
+        "elapsed_sec": round(elapsed, 3),
+        "rps": round(total_requests / elapsed, 2) if elapsed else total_requests,
+    }
+
+
+def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]]":
+    q: "queue.Queue[tuple[int, str]]" = queue.Queue()
+    for idx in range(total):
+        url = urls[idx % len(urls)]
+        q.put((idx, url))
+    return q
+
+
 def worker_main(
     name: str,
-    client: LossyAkariClient,
+    client: LoadTestClient,
     tasks: "queue.Queue[tuple[int, str]]",
-    agg: ResultAggregator,
+    agg: Aggregator,
     delay: float,
-    logger: "LogWriter | None",
+    logger: LogWriter | None,
 ) -> None:
     while True:
         try:
             idx, url = tasks.get_nowait()
         except queue.Empty:
             return
+
         start = time.perf_counter()
         try:
             outcome = client.send_request(url, message_id=idx, timestamp=int(time.time()))
@@ -285,90 +333,73 @@ def worker_main(
                     "timestamp": time.time(),
                 }
             )
-        LOGGER.debug("%s done url=%s elapsed=%.3fs complete=%s error=%s", name, url, elapsed, outcome.complete, outcome.error)
+
         if delay:
             time.sleep(delay)
 
 
-def summarize(counters: StressCounters) -> dict[str, object]:
-    latencies = sorted(counters.latencies)
-    count = len(latencies)
-    pct95 = latencies[max(int(count * 0.95) - 1, 0)] if count else 0.0
-    pct99 = latencies[max(int(count * 0.99) - 1, 0)] if count else 0.0
-    avg = sum(latencies) / count if count else 0.0
-    return {
-        "success": counters.success,
-        "timeout": counters.timeout,
-        "error": counters.error,
-        "exceptions": counters.exceptions,
-        "bytes_sent": counters.bytes_sent,
-        "bytes_received": counters.bytes_received,
-        "latency_avg_sec": round(avg, 4),
-        "latency_p95_sec": round(pct95, 4),
-        "latency_p99_sec": round(pct99, 4),
-    }
-
-
-def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]]":
-    q: "queue.Queue[tuple[int, str]]" = queue.Queue()
-    for idx in range(total):
-        url = urls[idx % len(urls)]
-        q.put((idx, url))
-    return q
-
-
-class LogWriter:
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._lock = threading.Lock()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-
-    def write(self, obj: dict[str, object]) -> None:
-        line = json.dumps(obj, ensure_ascii=False)
-        with self._lock:
-            with self._path.open("a", encoding="utf-8") as fp:
-                fp.write(line + "\n")
+def load_urls(args: argparse.Namespace) -> list[str]:
+    urls: list[str] = []
+    if args.url_file:
+        path = Path(args.url_file)
+        urls.extend([line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()])
+    if args.urls:
+        urls.extend(args.urls)
+    return urls or ["https://example.com/"]
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="AKARI-UDP stress tester (disaster-mode)")
-    parser.add_argument("--host", default="127.0.0.1", help="リモートプロキシのホスト")
-    parser.add_argument("--port", type=int, default=14500, help="リモートプロキシのポート")
-    parser.add_argument("--psk", default="test-psk-0000-test", help="PSK (文字列)")
-    parser.add_argument("--hex", action="store_true", help="PSK を 16 進として解釈")
-    parser.add_argument("--url", action="append", dest="urls", help="叩く URL (複数指定可)", default=["https://example.com/"])
-    parser.add_argument("--requests", type=int, default=100, help="総リクエスト数")
-    parser.add_argument("--concurrency", type=int, default=8, help="同時実行スレッド数")
-    parser.add_argument("--timeout", type=float, default=2.0, help="UDP タイムアウト秒")
-    parser.add_argument("--loss-rate", type=float, default=0.1, help="受信ドロップ確率 (0-1)")
-    parser.add_argument("--jitter", type=float, default=0.0, help="受信後に入れるジッター秒 (0 で無効)")
-    parser.add_argument("--delay", type=float, default=0.0, help="各リクエスト完了後に入れる待機秒")
-    parser.add_argument("--demo-server", action="store_true", help="ローカル簡易サーバを起動して自己完結でテストする")
-    parser.add_argument("--log-file", type=str, help="テスト結果を JSON Lines で追記出力するパス")
-    parser.add_argument("--log-level", default="INFO", help="ログレベル")
+    parser = argparse.ArgumentParser(description="AKARI UDP load test runner")
+    parser.add_argument("--host", default="127.0.0.1", help="Remote proxy host")
+    parser.add_argument("--port", type=int, default=14500, help="Remote proxy port")
+    parser.add_argument("--psk", default="test-psk-0000-test", help="PSK (text or hex if --hex is set)")
+    parser.add_argument("--hex", action="store_true", help="Interpret PSK as hexadecimal")
+    parser.add_argument("--protocol-version", type=int, default=2, choices=[1, 2], help="AKARI protocol version")
+    parser.add_argument("--url", action="append", dest="urls", help="Target URL (can specify multiple)")
+    parser.add_argument("--url-file", help="Path to file that lists target URLs line by line")
+    parser.add_argument("--requests", type=int, default=200, help="Total request count")
+    parser.add_argument("--concurrency", type=int, default=8, help="Number of worker threads")
+    parser.add_argument("--timeout", type=float, default=3.0, help="UDP timeout per request (seconds)")
+    parser.add_argument("--loss-rate", type=float, default=0.0, help="Probability to drop a received packet")
+    parser.add_argument("--jitter", type=float, default=0.0, help="Maximum jitter (seconds) added after a receive")
+    parser.add_argument("--delay", type=float, default=0.0, help="Sleep after each request (seconds)")
+    parser.add_argument("--max-nack-rounds", type=int, default=3, help="How many times to send NACK when missing chunks")
+    parser.add_argument("--log-file", type=str, help="Append request-level JSON lines to this path")
+    parser.add_argument("--summary-file", type=str, help="Write summary JSON to this path")
+    parser.add_argument("--demo-server", action="store_true", help="Start a local UDP responder to avoid real traffic")
+    parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
+    parser.add_argument("--log-level", default="INFO", help="Logging level")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(levelname)s %(name)s: %(message)s")
     psk = parse_psk(args.psk, hex_mode=args.hex)
+    urls = load_urls(args)
+    logger = LogWriter(Path(args.log_file)) if args.log_file else None
+
     server: DemoServer | None = None
     target = (args.host, args.port)
-
     if args.demo_server:
-        server = DemoServer(args.host, args.port, psk, body=b"demo-stress-response", timeout=args.timeout)
+        server = DemoServer(args.host, args.port, psk, body=args.demo_body.encode("utf-8"), timeout=args.timeout)
         server.start()
         target = server.address
         LOGGER.info("demo server listening on %s:%s", *target)
 
-    log_writer = LogWriter(Path(args.log_file)) if args.log_file else None
-
-    tasks = build_tasks(args.requests, args.urls)
-    agg = ResultAggregator()
+    tasks = build_tasks(args.requests, urls)
+    agg = Aggregator()
     workers = []
     for i in range(args.concurrency):
-        client = LossyAkariClient(target, psk, timeout=args.timeout, loss_rate=args.loss_rate, jitter=args.jitter)
+        client = LoadTestClient(
+            target,
+            psk,
+            timeout=args.timeout,
+            loss_rate=args.loss_rate,
+            jitter=args.jitter,
+            protocol_version=args.protocol_version,
+            max_nack_rounds=args.max_nack_rounds,
+        )
         t = threading.Thread(
             target=worker_main,
-            args=(f"worker-{i+1}", client, tasks, agg, args.delay, log_writer),
+            args=(f"worker-{i+1}", client, tasks, agg, args.delay, logger),
             daemon=True,
         )
         t.start()
@@ -383,34 +414,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         server.stop()
 
     counters = agg.snapshot()
-    summary = summarize(counters)
-    summary["elapsed_sec"] = round(elapsed, 3)
-    summary["rps"] = round(args.requests / elapsed, 2) if elapsed else args.requests
-    if log_writer:
-        log_writer.write(
-            {
-                "event": "summary",
-                "timestamp": time.time(),
-                "summary": summary,
-                "params": {
-                    "host": target[0],
-                    "port": target[1],
-                    "requests": args.requests,
-                    "concurrency": args.concurrency,
-                    "loss_rate": args.loss_rate,
-                    "jitter": args.jitter,
-                    "timeout": args.timeout,
-                    "delay": args.delay,
-                    "urls": args.urls,
-                    "demo_server": args.demo_server,
-                },
-            }
-        )
+    summary = summarize(counters, elapsed, args.requests)
+    if logger:
+        logger.write({"event": "summary", "timestamp": time.time(), "summary": summary})
+    if args.summary_file:
+        Path(args.summary_file).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
-    import socket
-
     main()
