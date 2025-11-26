@@ -18,6 +18,7 @@ from akari.remote_proxy.handler import (
     FIRST_CHUNK_CAPACITY,
     MTU_PAYLOAD_SIZE,
     RESP_CACHE,
+    clear_caches,
     _handle_nack,
     _encode_success_datagrams,
     handle_request,
@@ -52,7 +53,7 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         return _to_native(parsed)
 
     def tearDown(self) -> None:
-        RESP_CACHE.clear()
+        clear_caches()
 
     def test_handle_request_splits_body_into_multiple_chunks(self) -> None:
         body = b"A" * (FIRST_CHUNK_CAPACITY + MTU_PAYLOAD_SIZE + 10)
@@ -145,12 +146,69 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         self.assertEqual(resent, list(datagrams[1:3]))
 
 
+class HttpCacheTest(unittest.TestCase):
+    PSK = b"test-psk-0000-test"
+
+    def _make_request(self, *, url: str = "https://example.com/cache", version: int = 2) -> IncomingRequest:
+        return IncomingRequest(
+            header={"message_id": 0x200, "timestamp": 0x55, "version": version},
+            payload={"url": url},
+            packet_type="req",
+            addr=("127.0.0.1", 9000),
+            parsed={},
+            datagram=b"",
+            psk=self.PSK,
+        )
+
+    def _decode(self, datagram: bytes) -> dict:
+        parsed = decode_packet_py(bytes(datagram), self.PSK)
+        return _to_native(parsed)
+
+    def tearDown(self) -> None:
+        clear_caches()
+
+    def test_serves_cached_response_until_expiry(self) -> None:
+        response = {"status_code": 200, "headers": {"cache-control": "max-age=30"}, "body": b"cached-body"}
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=response), patch(
+            "akari.remote_proxy.handler.time.time", return_value=1000.0
+        ):
+            handle_request(self._make_request())
+
+        with patch("akari.remote_proxy.handler.fetch") as fetch_mock, patch(
+            "akari.remote_proxy.handler.time.time", return_value=1005.0
+        ):
+            datagrams = handle_request(self._make_request())
+
+        fetch_mock.assert_not_called()
+        assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
+        self.assertEqual(assembled, response["body"])
+
+    def test_cache_expires_after_ttl(self) -> None:
+        first = {"status_code": 200, "headers": {"cache-control": "max-age=1"}, "body": b"v1"}
+        second = {"status_code": 200, "headers": {"cache-control": "max-age=1"}, "body": b"v2"}
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=first), patch(
+            "akari.remote_proxy.handler.time.time", return_value=1000.0
+        ):
+            handle_request(self._make_request())
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=second) as fetch_mock, patch(
+            "akari.remote_proxy.handler.time.time", return_value=1002.0
+        ):
+            datagrams = handle_request(self._make_request())
+
+        fetch_mock.assert_called_once()
+        assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
+        self.assertEqual(assembled, second["body"])
+
+
 class RemoteProxyServerTest(unittest.TestCase):
     PSK = b"test-psk-0000-test"
     URL = "https://example.com/ok"
 
     def tearDown(self) -> None:
-        RESP_CACHE.clear()
+        clear_caches()
 
     def _run_server(self) -> tuple[AkariUdpServer, threading.Thread]:
         server = AkariUdpServer("127.0.0.1", 0, self.PSK, handle_request, timeout=2.0)

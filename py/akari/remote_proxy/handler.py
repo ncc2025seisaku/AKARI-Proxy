@@ -45,6 +45,12 @@ RESP_CACHE_TTL = 5.0
 RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
 RESP_CACHE_LOCK = threading.RLock()
 
+# HTTP レスポンスキャッシュ: url -> (expires_at, response)
+HTTP_CACHE_DEFAULT_TTL = 60.0
+HTTP_CACHE_MAX_ENTRIES = 256
+HTTP_CACHE: dict[str, tuple[float, HttpResponse]] = {}
+HTTP_CACHE_LOCK = threading.RLock()
+
 
 def _now_timestamp() -> int:
     return int(time.time())
@@ -88,21 +94,28 @@ def _cache_ttl_from_headers(headers: dict[str, str]) -> float | None:
 
 def _purge_http_cache(now: float | None = None) -> None:
     now = now or time.time()
-    expired = [url for url, (expires_at, _) in HTTP_CACHE.items() if expires_at <= now]
-    for url in expired:
-        HTTP_CACHE.pop(url, None)
+    with HTTP_CACHE_LOCK:
+        expired = [url for url, (expires_at, _) in HTTP_CACHE.items() if expires_at <= now]
+        for url in expired:
+            HTTP_CACHE.pop(url, None)
+        overflow = max(0, len(HTTP_CACHE) - HTTP_CACHE_MAX_ENTRIES)
+        if overflow > 0:
+            victims = sorted(HTTP_CACHE.items(), key=lambda item: item[1][0])[:overflow]
+            for url, _ in victims:
+                HTTP_CACHE.pop(url, None)
 
 
 def _get_cached_http_response(url: str, *, now: float | None = None) -> HttpResponse | None:
     now = now or time.time()
-    cached = HTTP_CACHE.get(url)
-    if not cached:
-        return None
-    expires_at, response = cached
-    if expires_at <= now:
-        HTTP_CACHE.pop(url, None)
-        return None
-    return _clone_response(response)
+    with HTTP_CACHE_LOCK:
+        cached = HTTP_CACHE.get(url)
+        if not cached:
+            return None
+        expires_at, response = cached
+        if expires_at <= now:
+            HTTP_CACHE.pop(url, None)
+            return None
+        return _clone_response(response)
 
 
 def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | None = None) -> None:
@@ -113,8 +126,9 @@ def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | No
     if ttl is None:
         return
     expires_at = (now or time.time()) + ttl
-    HTTP_CACHE[url] = (expires_at, _clone_response(response))
-    _purge_http_cache(now=now)
+    with HTTP_CACHE_LOCK:
+        HTTP_CACHE[url] = (expires_at, _clone_response(response))
+        _purge_http_cache(now=now)
 
 
 def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
@@ -239,7 +253,7 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     # キャッシュして再送に備える
     with RESP_CACHE_LOCK:
         RESP_CACHE[message_id] = (time.time(), datagrams)
-        _purge_cache()
+        _purge_resp_cache()
     return datagrams
 
 
@@ -319,8 +333,10 @@ def _purge_resp_cache() -> None:
 
 def clear_caches() -> None:
     """Clear in-memory response caches (for tests or debugging)."""
-    RESP_CACHE.clear()
-    HTTP_CACHE.clear()
+    with RESP_CACHE_LOCK:
+        RESP_CACHE.clear()
+    with HTTP_CACHE_LOCK:
+        HTTP_CACHE.clear()
 
 
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:
