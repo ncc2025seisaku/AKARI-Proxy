@@ -50,6 +50,73 @@ def _now_timestamp() -> int:
     return int(time.time())
 
 
+def _clone_response(response: HttpResponse) -> HttpResponse:
+    return {
+        "status_code": int(response["status_code"]),
+        "headers": dict(response.get("headers", {})),
+        "body": bytes(response.get("body", b"")),
+    }
+
+
+def _normalize_cache_key(url: str) -> str:
+    return url.strip()
+
+
+def _cache_ttl_from_headers(headers: dict[str, str]) -> float | None:
+    normalized_headers = {key.lower(): value for key, value in headers.items()}
+    cache_control = normalized_headers.get("cache-control", "")
+    directives = [directive.strip() for directive in cache_control.split(",") if directive.strip()]
+    if any(directive in {"no-store", "no-cache"} for directive in directives):
+        return None
+    if "private" in directives:
+        return None
+
+    for directive in directives:
+        if directive.startswith("max-age="):
+            try:
+                value = int(directive.split("=", 1)[1])
+            except ValueError:
+                continue
+            if value <= 0:
+                return None
+            return float(value)
+
+    if "set-cookie" in normalized_headers:
+        return None
+    return HTTP_CACHE_DEFAULT_TTL
+
+
+def _purge_http_cache(now: float | None = None) -> None:
+    now = now or time.time()
+    expired = [url for url, (expires_at, _) in HTTP_CACHE.items() if expires_at <= now]
+    for url in expired:
+        HTTP_CACHE.pop(url, None)
+
+
+def _get_cached_http_response(url: str, *, now: float | None = None) -> HttpResponse | None:
+    now = now or time.time()
+    cached = HTTP_CACHE.get(url)
+    if not cached:
+        return None
+    expires_at, response = cached
+    if expires_at <= now:
+        HTTP_CACHE.pop(url, None)
+        return None
+    return _clone_response(response)
+
+
+def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | None = None) -> None:
+    status = int(response.get("status_code", 0))
+    if status >= 500:
+        return
+    ttl = _cache_ttl_from_headers(response.get("headers", {}))
+    if ttl is None:
+        return
+    expires_at = (now or time.time()) + ttl
+    HTTP_CACHE[url] = (expires_at, _clone_response(response))
+    _purge_http_cache(now=now)
+
+
 def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
     if FIRST_CHUNK_CAPACITY <= 0:
         first_chunk = b""
@@ -242,12 +309,18 @@ def _bitmap_to_seq(bitmap: bytes) -> list[int]:
     return out
 
 
-def _purge_cache() -> None:
+def _purge_resp_cache() -> None:
     now = time.time()
     with RESP_CACHE_LOCK:
         expired = [mid for mid, (ts, _) in RESP_CACHE.items() if now - ts > RESP_CACHE_TTL]
         for mid in expired:
             RESP_CACHE.pop(mid, None)
+
+
+def clear_caches() -> None:
+    """Clear in-memory response caches (for tests or debugging)."""
+    RESP_CACHE.clear()
+    HTTP_CACHE.clear()
 
 
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:
@@ -275,15 +348,24 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             message="payload.url is missing",
         )
 
+    normalized_url = _normalize_cache_key(url)
+
     LOGGER.info(
         "handling request message_id=%s url=%s from=%s",
         request.header.get("message_id"),
-        url,
+        normalized_url,
         request.addr,
     )
 
+    now = time.time()
+    _purge_http_cache(now=now)
+    cached_response = _get_cached_http_response(normalized_url, now=now)
+    if cached_response is not None:
+        LOGGER.info("serve cached response message_id=%s url=%s", request.header.get("message_id"), normalized_url)
+        return _encode_success_datagrams(request, cached_response)
+
     try:
-        response = fetch(url)
+        response = fetch(normalized_url)
     except InvalidURLError as exc:
         return _encode_error(
             request,
@@ -327,4 +409,5 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
         response["status_code"],
         len(response["body"]),
     )
+    _maybe_store_http_cache(normalized_url, response, now=time.time())
     return _encode_success_datagrams(request, response)
