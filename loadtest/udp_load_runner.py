@@ -235,13 +235,18 @@ class DemoServer:
 
 
 class LogWriter:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, extra: Mapping[str, object] | None = None) -> None:
         self._path = path
         self._lock = threading.Lock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._extra = dict(extra) if extra else None
 
     def write(self, obj: dict[str, object]) -> None:
-        line = json.dumps(obj, ensure_ascii=False)
+        if self._extra:
+            payload = {**self._extra, **obj}
+        else:
+            payload = obj
+        line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
             with self._path.open("a", encoding="utf-8") as fp:
                 fp.write(line + "\n")
@@ -348,7 +353,7 @@ def load_urls(args: argparse.Namespace) -> list[str]:
     return urls or ["https://example.com/"]
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AKARI UDP load test runner")
     parser.add_argument("--host", default="127.0.0.1", help="Remote proxy host")
     parser.add_argument("--port", type=int, default=14500, help="Remote proxy port")
@@ -369,12 +374,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--demo-server", action="store_true", help="Start a local UDP responder to avoid real traffic")
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
-    args = parser.parse_args(argv)
+    return parser
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(levelname)s %(name)s: %(message)s")
+
+def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) -> dict[str, object]:
+    if configure_logging:
+        logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(levelname)s %(name)s: %(message)s")
+
     psk = parse_psk(args.psk, hex_mode=args.hex)
     urls = load_urls(args)
-    logger = LogWriter(Path(args.log_file)) if args.log_file else None
+    log_context = getattr(args, "log_context", None)
+    logger = LogWriter(Path(args.log_file), extra=log_context) if args.log_file else None
 
     server: DemoServer | None = None
     target = (args.host, args.port)
@@ -419,7 +429,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.write({"event": "summary", "timestamp": time.time(), "summary": summary})
     if args.summary_file:
         Path(args.summary_file).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
 
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    summary = run_load_test(args, configure_logging=True)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

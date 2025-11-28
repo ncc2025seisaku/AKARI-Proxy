@@ -62,3 +62,9 @@ The script prints a summary JSON to stdout. Example:
 ## Safety note
 - Default settings keep traffic on localhost; explicitly set host/port/PSK before touching any shared or production-like environment.
 - This toolkit is non-production; no production files were altered or removed.
+
+## Disaster checklist runner
+Use `disaster_suite.py` to execute a predefined set of harsh-network scenarios derived from the AKARI-UDP v2 disaster checklist. Each run appends summaries to `logs/disaster_suite_history.jsonl` and optionally request-level events to `logs/disaster_suite_events.jsonl`.
+```powershell
+python loadtest/disaster_suite.py --demo-server --requests 200 --concurrency 16
+```
