@@ -51,11 +51,22 @@ def normalize_object(value: object) -> object:
 class LoadTestClient(AkariUdpClient):
     """AkariUdpClient with timeout/loss/jitter controls for load testing."""
 
-    def __init__(self, *args, loss_rate: float = 0.0, jitter: float = 0.0, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        loss_rate: float = 0.0,
+        jitter: float = 0.0,
+        flap_interval: float = 0.0,
+        flap_duration: float = 0.0,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._loss_rate = max(0.0, min(1.0, loss_rate))
         self._jitter = max(0.0, jitter)
         self._timeout = kwargs.get("timeout") or 3.0
+        self._flap_interval = max(0.0, flap_interval)
+        self._flap_duration = max(0.0, flap_duration)
+        self._started_at = time.monotonic()
 
     def send_request(  # type: ignore[override]
         self,
@@ -95,6 +106,11 @@ class LoadTestClient(AkariUdpClient):
                 except socket.timeout:
                     timed_out = True
                     break
+
+                if self._flap_interval and self._flap_duration:
+                    if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
+                        LOGGER.debug("drop packet by flap window message_id=%s", message_id)
+                        continue
 
                 if self._loss_rate and random.random() < self._loss_rate:
                     LOGGER.debug("drop packet message_id=%s", message_id)
@@ -367,12 +383,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=3.0, help="UDP timeout per request (seconds)")
     parser.add_argument("--loss-rate", type=float, default=0.0, help="Probability to drop a received packet")
     parser.add_argument("--jitter", type=float, default=0.0, help="Maximum jitter (seconds) added after a receive")
+    parser.add_argument("--flap-interval", type=float, default=0.0, help="Simulate flap: interval seconds for blackout cycle")
+    parser.add_argument("--flap-duration", type=float, default=0.0, help="Simulate flap: duration seconds to drop packets each interval")
     parser.add_argument("--delay", type=float, default=0.0, help="Sleep after each request (seconds)")
     parser.add_argument("--max-nack-rounds", type=int, default=3, help="How many times to send NACK when missing chunks")
+    parser.add_argument("--buffer-size", type=int, default=65535, help="Socket recv buffer size")
+    parser.add_argument("--heartbeat-interval", type=float, default=0.0, help="Send lightweight re-probe after this idle time (seconds)")
+    parser.add_argument("--heartbeat-backoff", type=float, default=1.5, help="Backoff multiplier for heartbeat retries")
+    parser.add_argument("--max-retries", type=int, default=0, help="How many proactive re-sends to attempt on silence")
+    parser.add_argument(
+        "--initial-retry-delay",
+        type=float,
+        default=0.0,
+        help="First retry delay (defaults to heartbeat interval if 0)",
+    )
     parser.add_argument("--log-file", type=str, help="Append request-level JSON lines to this path")
     parser.add_argument("--summary-file", type=str, help="Write summary JSON to this path")
     parser.add_argument("--demo-server", action="store_true", help="Start a local UDP responder to avoid real traffic")
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
+    parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
+    parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
 
@@ -389,7 +419,14 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
     server: DemoServer | None = None
     target = (args.host, args.port)
     if args.demo_server:
-        server = DemoServer(args.host, args.port, psk, body=args.demo_body.encode("utf-8"), timeout=args.timeout)
+        if args.demo_body_file:
+            body_bytes = Path(args.demo_body_file).read_bytes()
+        elif args.demo_body_size and args.demo_body_size > 0:
+            seed = args.demo_body if args.demo_body else "x"
+            body_bytes = seed.encode("utf-8") * args.demo_body_size
+        else:
+            body_bytes = args.demo_body.encode("utf-8")
+        server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address
         LOGGER.info("demo server listening on %s:%s", *target)
@@ -404,8 +441,15 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             timeout=args.timeout,
             loss_rate=args.loss_rate,
             jitter=args.jitter,
+            flap_interval=args.flap_interval,
+            flap_duration=args.flap_duration,
             protocol_version=args.protocol_version,
             max_nack_rounds=args.max_nack_rounds,
+            buffer_size=args.buffer_size,
+            heartbeat_interval=args.heartbeat_interval,
+            heartbeat_backoff=args.heartbeat_backoff,
+            max_retries=args.max_retries,
+            initial_retry_delay=args.initial_retry_delay,
         )
         t = threading.Thread(
             target=worker_main,

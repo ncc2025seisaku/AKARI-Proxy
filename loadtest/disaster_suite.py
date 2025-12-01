@@ -65,6 +65,56 @@ SCENARIOS: list[Scenario] = [
         description="断続的ドロップ（20%）＋小さな待ちを挟み、断続断後の復帰を確認。",
         overrides={"requests": 150, "concurrency": 12, "timeout": 5.0, "loss_rate": 0.2, "delay": 0.02},
     ),
+    Scenario(
+        key="flap_harsh",
+        description="強いフラップ（毎秒0.3秒ブラックアウト）＋軽ロス。復元性を重点確認。",
+        overrides={
+            "requests": 200,
+            "concurrency": 16,
+            "timeout": 6.0,
+            "loss_rate": 0.05,
+            "flap_interval": 1.0,
+            "flap_duration": 0.3,
+            "heartbeat_interval": 0.5,
+            "max_retries": 4,
+            "initial_retry_delay": 0.15,
+            "heartbeat_backoff": 1.2,
+        },
+    ),
+    Scenario(
+        key="mtu_variation_like",
+        description="MTU変動の近似（フラグメント相当の小さいチャンクを強制受信）。",
+        overrides={
+            "requests": 240,
+            "concurrency": 24,
+            "timeout": 5.0,
+            "buffer_size": 1400,
+            "loss_rate": 0.05,
+            "jitter": 0.05,
+        },
+    ),
+    Scenario(
+        key="gz_large_body",
+        description="10MBクラスの巨大レスポンスをdemo-serverで返し、デコード/転送負荷を見る。",
+        overrides={
+            "requests": 60,
+            "concurrency": 12,
+            "timeout": 8.0,
+            "demo_body_size": 10_000_000,
+            "delay": 0.01,
+        },
+    ),
+    Scenario(
+        key="sw_fetch_3000_like",
+        description="3000本相当の大量フェッチを模擬（軽いロス付き）。",
+        overrides={
+            "requests": 3000,
+            "concurrency": 120,
+            "timeout": 5.0,
+            "loss_rate": 0.02,
+            "jitter": 0.02,
+        },
+    ),
 ]
 
 SCENARIO_MAP = {scenario.key: scenario for scenario in SCENARIOS}
@@ -121,9 +171,18 @@ def extract_runtime(run_args: argparse.Namespace) -> dict[str, object]:
         "jitter": run_args.jitter,
         "delay": run_args.delay,
         "max_nack_rounds": run_args.max_nack_rounds,
+        "flap_interval": run_args.flap_interval,
+        "flap_duration": run_args.flap_duration,
+        "buffer_size": run_args.buffer_size,
+        "heartbeat_interval": run_args.heartbeat_interval,
+        "heartbeat_backoff": run_args.heartbeat_backoff,
+        "max_retries": run_args.max_retries,
+        "initial_retry_delay": run_args.initial_retry_delay,
         "demo_server": run_args.demo_server,
         "urls": run_args.urls,
         "url_file": run_args.url_file,
+        "demo_body_size": run_args.demo_body_size,
+        "demo_body_file": run_args.demo_body_file,
     }
 
 

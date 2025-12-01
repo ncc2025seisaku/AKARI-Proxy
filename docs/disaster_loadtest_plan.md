@@ -21,6 +21,10 @@
 | burst_traffic | 高並列・高PPS | バースト/多ストリーム耐性 |
 | multistream_sustained | 中並列で長めの持続 | バッファ枯渇・リーク観察 |
 | flap_drop | 断続ドロップ20% + 軽い待ち | 断続断後の復帰・再確立速度 |
+| flap_harsh | 毎秒0.3秒ブラックアウト + ロス5% | 短時間切断(flap)からの復元性 |
+| mtu_variation_like | 受信バッファ1400B + 小ジッター/軽ロス | MTU変動・フラグメント近似 |
+| gz_large_body | 10MB級レスポンス | 圧縮/巨大レスポンス負荷 |
+| sw_fetch_3000_like | 3000本相当の大量フェッチ | SWバースト吸収・同時接続限界 |
 
 ## 2. 事前準備
 1. Python 仮想環境を有効化。
@@ -67,6 +71,15 @@ python loadtest/disaster_suite.py `
 python loadtest/disaster_suite.py --no-event-log --demo-server
 ```
 
+### 3.6 フラップ/巨大レスポンス特化の単体実行例
+```powershell
+# 毎秒0.3秒ブラックアウトを付ける
+python loadtest/disaster_suite.py --scenario flap_harsh --demo-server
+
+# 10MBレスポンスで圧縮/解凍負荷を模擬
+python loadtest/disaster_suite.py --scenario gz_large_body --demo-server --demo-body-size 10000000
+```
+
 ## 4. 生成されるファイル
 - `logs/disaster_suite_history.jsonl`  
   各シナリオ実行ごとのサマリが **追記** されます（時刻・シナリオ key・実行パラメータ・結果）。
@@ -106,13 +119,23 @@ python loadtest/disaster_suite.py --no-event-log --demo-server
 - バースト/多ストリーム: `burst_traffic` でエラー増加や RPS 低下を確認。
 - 長時間稼働/バッファ: `multistream_sustained` のメモリ/CPUを別途観察（htop/pprof併用）。
 - 断続断: `flap_drop` で timeout/再接続の安定性を確認。
+- 強フラップ: `flap_harsh` で短時間切断中の復元性を確認。
+- MTU変動近似: `mtu_variation_like` でバッファ/フラグメント耐性を確認。
+- 巨大レスポンス: `gz_large_body` で解凍/転送負荷を確認。
+- 3000本級: `sw_fetch_3000_like` で SW バースト吸収力を確認。
 
 ## 7. 注意点
 - `--demo-server` を付けると完全ローカルで安全に試せます。外部を叩く場合は必ずテスト用環境だけに限定してください。
 - MTU変動や再順序入れ替えの厳密再現は OS の `tc/netem` が必要です（本スクリプトではロス/ジッターで近似）。
 - ログはすべて追記型です。容量が増えたら適宜ローテーションしてください。
 
-## 8. 参考
+## 8. 追加オプション（負荷シナリオ強化向け）
+- `--flap-interval` / `--flap-duration`: ブラックアウトの間隔・長さを指定（受信パケットをドロップ）。
+- `--buffer-size`: 受信バッファサイズを絞って MTU変動の近似を行う。
+- `--demo-body-size` / `--demo-body-file`: Demoサーバのレスポンスを任意サイズ・任意ファイルに変更。
+- `--heartbeat-interval` / `--heartbeat-backoff` / `--max-retries` / `--initial-retry-delay`: 無通信時に軽量再送プローブを自動送信し、フラップ耐性を試す。
+
+## 9. 参考
 - 実行エントリ: `loadtest/disaster_suite.py`
 - 基本ランナー: `loadtest/udp_load_runner.py`
 - テスト結果: `logs/disaster_suite_history.jsonl`, `logs/disaster_suite_events.jsonl`, `logs/disaster_suite_summary.json`

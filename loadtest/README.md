@@ -68,3 +68,7 @@ Use `disaster_suite.py` to execute a predefined set of harsh-network scenarios d
 ```powershell
 python loadtest/disaster_suite.py --demo-server --requests 200 --concurrency 16
 ```
+Key options for harsh cases:
+- `--flap-interval` / `--flap-duration`: drop all received packets during blackout windows (flap simulation).
+- `--buffer-size`: shrink receive buffer to approximate MTU variation.
+- `--demo-body-size` or `--demo-body-file`: feed large responses for decompression/transfer load.

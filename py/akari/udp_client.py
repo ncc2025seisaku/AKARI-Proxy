@@ -179,6 +179,7 @@ class AkariUdpClient:
     ) -> ResponseOutcome:
         """Send a request and wait for resp/error. timeout=None means wait indefinitely."""
 
+        timed_out = False
         if datagram is None:
             if self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, 0, self._psk)
