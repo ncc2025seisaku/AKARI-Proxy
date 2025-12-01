@@ -152,14 +152,22 @@ class AkariUdpClient:
         buffer_size: int = 65535,
         protocol_version: int = 2,
         max_nack_rounds: int = 3,
+        heartbeat_interval: float = 0.0,
+        heartbeat_backoff: float = 1.5,
+        max_retries: int = 0,
+        initial_retry_delay: float = 0.0,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
-        # timeout は無視するが、後方互換のため受け取る
+        # timeout: Noneなら待ち続ける。指定があれば全体の締め切りとして使う
         self._timeout = timeout
         self._buffer_size = buffer_size
         self._max_nack_rounds = max(0, int(max_nack_rounds))
         self._version = protocol_version
+        self._heartbeat_interval = max(0.0, heartbeat_interval)
+        self._heartbeat_backoff = heartbeat_backoff if heartbeat_backoff > 0 else 1.0
+        self._max_retries = max(0, int(max_retries))
+        self._initial_retry_delay = max(0.0, initial_retry_delay if initial_retry_delay > 0 else heartbeat_interval)
 
     def send_request(
         self,
@@ -182,13 +190,36 @@ class AkariUdpClient:
         error_payload: Mapping[str, Any] | None = None
         bytes_sent = len(datagram)
         bytes_received = 0
+        start_ts = time.monotonic()
+        deadline = start_ts + self._timeout if self._timeout else None
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(None)
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
             nacks_sent = 0
+            retries = 0
+            heartbeat_interval = self._heartbeat_interval
+            next_probe = (
+                last_received + heartbeat_interval if heartbeat_interval > 0 and self._max_retries > 0 else None
+            )
+            retry_delay = self._initial_retry_delay if self._initial_retry_delay > 0 else heartbeat_interval
             while True:
+                if deadline is not None and time.monotonic() >= deadline:
+                    timed_out = True
+                    break
+
+                # ハートビート/再送を適応的に送る（フラップ対策）
+                if next_probe is not None and time.monotonic() >= next_probe and retries < self._max_retries:
+                    sock.sendto(datagram, self._remote_addr)
+                    retries += 1
+                    retry_delay = retry_delay * self._heartbeat_backoff if retry_delay else heartbeat_interval
+                    next_probe = time.monotonic() + max(retry_delay, heartbeat_interval)
+
+                remaining = None
+                if deadline is not None:
+                    remaining = max(deadline - time.monotonic(), 0.0)
+                sock.settimeout(0.5 if remaining is None else max(min(0.5, remaining), 0.05))
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
