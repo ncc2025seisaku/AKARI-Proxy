@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-import time
+import os
 import threading
+import time
 from typing import Iterable, Sequence
 
 from akari_udp_py import (
@@ -44,6 +45,8 @@ ERROR_UNSUPPORTED_PACKET = 254
 RESP_CACHE_TTL = 5.0
 RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
 RESP_CACHE_LOCK = threading.RLock()
+# フラップ耐性向上のための冗長送信回数（環境変数 AKARI_RESP_DUP_COUNT で上書き）
+RESP_DUP_COUNT = max(1, int(os.environ.get("AKARI_RESP_DUP_COUNT", "1")))
 
 # HTTP レスポンスキャッシュ: url -> (expires_at, response)
 HTTP_CACHE_DEFAULT_TTL = 60.0
@@ -186,7 +189,6 @@ STATIC_HEADER_IDS: dict[str, int] = {
 def _varint_u16(value: int) -> bytes:
     if value < 0 or value > 0xFFFF:
         raise ValueError("value out of range for u16 varint")
-    # simple 2-byte big endian (spec varint簡略化)
     return value.to_bytes(2, "big")
 
 
@@ -195,7 +197,7 @@ def _encode_header_items(headers: dict[str, str]) -> Iterable[bytes]:
         lname = name.lower()
         value_bytes = value.encode("utf-8", errors="replace")
         if len(value_bytes) > 0xFFFF:
-            continue  # skip overly large header to keep packet small
+            continue
         if lname in STATIC_HEADER_IDS:
             yield bytes([STATIC_HEADER_IDS[lname]]) + _varint_u16(len(value_bytes)) + value_bytes
         else:
@@ -277,6 +279,13 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     with RESP_CACHE_LOCK:
         RESP_CACHE[message_id] = (time.time(), datagrams)
         _purge_resp_cache()
+
+    dup = max(1, RESP_DUP_COUNT)
+    if dup > 1:
+        duplicated: list[bytes] = []
+        for d in datagrams:
+            duplicated.extend([d] * dup)
+        return duplicated
     return datagrams
 
 
@@ -327,7 +336,7 @@ def _handle_nack(request: IncomingRequest) -> Sequence[bytes]:
     if not isinstance(bitmap, (bytes, bytearray)):
         return ()
     seqs = _bitmap_to_seq(bitmap)
-    ts, cached = RESP_CACHE.get(message_id, (0.0, []))
+    _, cached = RESP_CACHE.get(message_id, (0.0, []))
     to_resend: list[bytes] = []
     for seq in seqs:
         if 0 <= seq < len(cached):
@@ -363,7 +372,7 @@ def clear_caches() -> None:
 
 
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:
-    """AkariUdpServer から呼ばれるハンドラ本体."""
+    """AkariUdpServer から呼ばれるハンドラ本体"""
 
     if request.packet_type == "nack":
         return _handle_nack(request)
@@ -437,7 +446,7 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             http_status=502,
             message=str(exc),
         )
-    except Exception as exc:  # noqa: BLE001 - 予期せぬ例外も握り潰してAKARIエラーで返す
+    except Exception as exc:  # noqa: BLE001
         LOGGER.exception("unexpected error while fetching url=%s", url)
         return _encode_error(
             request,

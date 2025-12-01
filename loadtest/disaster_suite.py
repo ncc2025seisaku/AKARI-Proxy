@@ -82,6 +82,22 @@ SCENARIOS: list[Scenario] = [
         },
     ),
     Scenario(
+        key="flap_recovery_tuned",
+        description="フラップ短縮版（毎秒0.2秒断＋再送/ハートビート強化）で回復率を確認。",
+        overrides={
+            "requests": 200,
+            "concurrency": 16,
+            "timeout": 5.0,
+            "loss_rate": 0.05,
+            "flap_interval": 1.0,
+            "flap_duration": 0.2,
+            "heartbeat_interval": 0.3,
+            "max_retries": 6,
+            "initial_retry_delay": 0.05,
+            "heartbeat_backoff": 1.2,
+        },
+    ),
+    Scenario(
         key="mtu_variation_like",
         description="MTU変動の近似（フラグメント相当の小さいチャンクを強制受信）。",
         overrides={

@@ -22,6 +22,7 @@
 | multistream_sustained | 中並列で長めの持続 | バッファ枯渇・リーク観察 |
 | flap_drop | 断続ドロップ20% + 軽い待ち | 断続断後の復帰・再確立速度 |
 | flap_harsh | 毎秒0.3秒ブラックアウト + ロス5% | 短時間切断(flap)からの復元性 |
+| flap_recovery_tuned | 0.2秒断＋再送/ハートビート強化 | フラップ復元性の改善確認 |
 | mtu_variation_like | 受信バッファ1400B + 小ジッター/軽ロス | MTU変動・フラグメント近似 |
 | gz_large_body | 10MB級レスポンス | 圧縮/巨大レスポンス負荷 |
 | sw_fetch_3000_like | 3000本相当の大量フェッチ | SWバースト吸収・同時接続限界 |
@@ -75,6 +76,9 @@ python loadtest/disaster_suite.py --no-event-log --demo-server
 ```powershell
 # 毎秒0.3秒ブラックアウトを付ける
 python loadtest/disaster_suite.py --scenario flap_harsh --demo-server
+
+# 短縮ブラックアウトと再送強化で回復率を比較
+python loadtest/disaster_suite.py --scenario flap_recovery_tuned --demo-server
 
 # 10MBレスポンスで圧縮/解凍負荷を模擬
 python loadtest/disaster_suite.py --scenario gz_large_body --demo-server --demo-body-size 10000000

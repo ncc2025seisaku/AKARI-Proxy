@@ -1,30 +1,30 @@
 {
-  "started_at": 1764557798.350875,
-  "finished_at": 1764557882.5034716,
+  "started_at": 1764558350.8336437,
+  "finished_at": 1764558420.9921877,
   "records": [
     {
-      "timestamp": 1764557882.5013723,
+      "timestamp": 1764558420.9881995,
       "iteration": 1,
-      "scenario": "flap_harsh",
-      "description": "強いフラップ（毎秒0.3秒ブラックアウト）＋軽ロス。復元性を重点確認。",
+      "scenario": "flap_recovery_tuned",
+      "description": "フラップ短縮版（毎秒0.2秒断＋再送/ハートビート強化）で回復率を確認。",
       "runtime": {
         "host": "127.0.0.1",
         "port": 14500,
         "protocol_version": 2,
         "requests": 200,
         "concurrency": 16,
-        "timeout": 6.0,
+        "timeout": 5.0,
         "loss_rate": 0.05,
         "jitter": 0.0,
         "delay": 0.0,
         "max_nack_rounds": 3,
         "flap_interval": 1.0,
-        "flap_duration": 0.3,
+        "flap_duration": 0.2,
         "buffer_size": 65535,
-        "heartbeat_interval": 0.5,
+        "heartbeat_interval": 0.3,
         "heartbeat_backoff": 1.2,
-        "max_retries": 4,
-        "initial_retry_delay": 0.15,
+        "max_retries": 6,
+        "initial_retry_delay": 0.05,
         "demo_server": true,
         "urls": null,
         "url_file": null,
@@ -41,8 +41,8 @@
         "latency_avg_sec": 0.0,
         "latency_p95_sec": 0.0,
         "latency_p99_sec": 0.0,
-        "elapsed_sec": 78.121,
-        "rps": 2.56
+        "elapsed_sec": 65.132,
+        "rps": 3.07
       }
     }
   ]
