@@ -1,0 +1,13 @@
+{
+  "success": 132,
+  "timeout": 68,
+  "error": 0,
+  "exceptions": 0,
+  "bytes_sent": 13000,
+  "bytes_received": 8052,
+  "latency_avg_sec": 0.1212,
+  "latency_p95_sec": 0.2336,
+  "latency_p99_sec": 0.2464,
+  "elapsed_sec": 26.577,
+  "rps": 7.53
+}
