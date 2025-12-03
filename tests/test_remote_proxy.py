@@ -18,6 +18,7 @@ from akari.remote_proxy.handler import (
     FIRST_CHUNK_CAPACITY,
     MTU_PAYLOAD_SIZE,
     RESP_CACHE,
+    FLAG_ENCRYPT,
     _handle_ack,
     _handle_nack,
     _encode_success_datagrams,
@@ -200,6 +201,25 @@ class RemoteProxyServerTest(unittest.TestCase):
         self.assertEqual(outcome.body, body)
         self.assertEqual(outcome.status_code, 200)
         self.assertIsNone(outcome.error)
+
+    def test_round_trip_success_encrypted(self) -> None:
+        body = b"secret hello"
+        response = {"status_code": 200, "headers": {}, "body": body}
+
+        with patch("akari.remote_proxy.handler.fetch", return_value=response), patch(
+            "akari.remote_proxy.handler._now_timestamp", return_value=0x55
+        ):
+            server, thread = self._run_server()
+            try:
+                client = AkariUdpClient(server.address, self.PSK, timeout=3.0, use_encryption=True)
+                outcome = client.send_request(self.URL, message_id=0x2, timestamp=0x3)
+            finally:
+                thread.join(timeout=2.0)
+                server.close()
+
+        self.assertTrue(outcome.complete)
+        self.assertEqual(outcome.body, body)
+        self.assertEqual(outcome.status_code, 200)
 
     def test_round_trip_timeout_error(self) -> None:
         with patch("akari.remote_proxy.handler.fetch", side_effect=TimeoutFetchError(5)):

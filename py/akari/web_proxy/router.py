@@ -33,7 +33,10 @@ class WebRouter:
         self._logger = logging.getLogger(__name__)
         self._config = config
         remote = config.remote
-        self._udp_client = AkariUdpClient((remote.host, remote.port), remote.psk, timeout=remote.timeout)
+        self._udp_client_plain = AkariUdpClient((remote.host, remote.port), remote.psk, timeout=remote.timeout)
+        self._udp_client_enc = AkariUdpClient(
+            (remote.host, remote.port), remote.psk, timeout=remote.timeout, use_encryption=True
+        )
         self._message_lock = threading.Lock()
         self._message_counter = secrets.randbelow(0xFFFF) or 1
         self._static_dir = (static_dir or Path(__file__).with_name("static")).resolve()
@@ -95,7 +98,8 @@ class WebRouter:
     ) -> RouteResult:
         raw_url = self._extract_url(form_params, json_payload, query_params)
         skip_filter = bool(query_params.get("entry"))
-        return self._execute_proxy(raw_url, skip_filter=skip_filter)
+        use_encryption = self._coerce_bool(query_params, "enc") or self._coerce_bool(query_params, "e") or False
+        return self._execute_proxy(raw_url, skip_filter=skip_filter, use_encryption=use_encryption)
 
     def _handle_filter_get(self) -> RouteResult:
         current = self._content_filter.snapshot()
@@ -138,9 +142,10 @@ class WebRouter:
         if not url.startswith(("http://", "https://")):
             return None
         skip_filter = bool(params.get("entry"))
-        return self._execute_proxy(url, skip_filter=skip_filter)
+        use_encryption = self._coerce_bool(params, "enc") or self._coerce_bool(params, "e") or False
+        return self._execute_proxy(url, skip_filter=skip_filter, use_encryption=use_encryption)
 
-    def _execute_proxy(self, raw_url: str, *, skip_filter: bool = False) -> RouteResult:
+    def _execute_proxy(self, raw_url: str, *, skip_filter: bool = False, use_encryption: bool = False) -> RouteResult:
         if not raw_url:
             return self._text_response(400, "url パラメータを指定してください。")
         target_url = self._normalize_user_input(raw_url)
@@ -156,7 +161,7 @@ class WebRouter:
                 return RouteResult(status_code=decision.status_code or 204, body=decision.body, headers=headers)
 
         try:
-            outcome = self._fetch_via_udp(target_url)
+            outcome = self._fetch_via_udp(target_url, use_encryption=use_encryption)
         except ValueError as exc:
             return self._text_response(502, str(exc))
 
@@ -372,13 +377,14 @@ class WebRouter:
             return body, False
 
     # ------------------------------- utilities -------------------------------
-    def _fetch_via_udp(self, url: str) -> ResponseOutcome:
+    def _fetch_via_udp(self, url: str, *, use_encryption: bool = False) -> ResponseOutcome:
         if not url.startswith(("http://", "https://")):
             raise ValueError("HTTP/HTTPS のみサポートします。")
         message_id = self._next_message_id()
         timestamp = int(time.time())
         try:
-            return self._udp_client.send_request(url, message_id, timestamp)
+            client = self._udp_client_enc if use_encryption else self._udp_client_plain
+            return client.send_request(url, message_id, timestamp)
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"AKARI-UDP リクエストに失敗: {exc}") from exc
 

@@ -153,6 +153,7 @@ class AkariUdpClient:
         protocol_version: int = 2,
         max_nack_rounds: int = 3,
         max_ack_rounds: int = 1,
+        use_encryption: bool = False,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -161,6 +162,7 @@ class AkariUdpClient:
         self._buffer_size = buffer_size
         self._max_nack_rounds = max(0, int(max_nack_rounds))
         self._max_ack_rounds = max(0, int(max_ack_rounds))
+        self._use_encryption = use_encryption
         self._version = protocol_version
 
     def send_request(
@@ -174,8 +176,9 @@ class AkariUdpClient:
         """Send a request and wait for resp/error. timeout=None means wait indefinitely."""
 
         if datagram is None:
+            flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
             if self._version >= 2:
-                datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, 0, self._psk)
+                datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
 

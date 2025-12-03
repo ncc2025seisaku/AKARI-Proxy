@@ -32,6 +32,7 @@ MTU_PAYLOAD_SIZE = 1180
 FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
 FLAG_HAS_HEADER = 0x40
+FLAG_ENCRYPT = 0x80
 
 ERROR_INVALID_URL = 10
 ERROR_RESPONSE_TOO_LARGE = 11
@@ -191,6 +192,8 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     version = int(request.header.get("version", 1))
     header_block = encode_header_block(response["headers"])
     flags = FLAG_HAS_HEADER if header_block else 0
+    if request.header.get("flags", 0) & FLAG_ENCRYPT:
+        flags |= FLAG_ENCRYPT
 
     if version >= 2:
         datagrams: list[bytes] = [
