@@ -317,6 +317,22 @@ def _bitmap_to_seq(bitmap: bytes) -> list[int]:
     return out
 
 
+def _handle_ack(request: IncomingRequest) -> Sequence[bytes]:
+    """ACK で通知された first_lost_seq 以降を再送する。"""
+    message_id = request.header.get("message_id")
+    first_lost = request.payload.get("first_lost_seq")
+    if not isinstance(first_lost, int):
+        return ()
+    with RESP_CACHE_LOCK:
+        cached = RESP_CACHE.get(message_id)
+        if not cached:
+            return ()
+        _, datagrams = cached
+        if first_lost < 0 or first_lost >= len(datagrams):
+            return ()
+        return datagrams[first_lost:]
+
+
 def _purge_resp_cache() -> None:
     now = time.time()
     with RESP_CACHE_LOCK:
@@ -339,7 +355,7 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
     if request.packet_type == "nack":
         return _handle_nack(request)
     if request.packet_type == "ack":
-        return ()
+        return _handle_ack(request)
 
     if request.packet_type != "req":
         return _encode_error(

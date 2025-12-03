@@ -18,6 +18,7 @@ from akari.remote_proxy.handler import (
     FIRST_CHUNK_CAPACITY,
     MTU_PAYLOAD_SIZE,
     RESP_CACHE,
+    _handle_ack,
     _handle_nack,
     _encode_success_datagrams,
     handle_request,
@@ -145,6 +146,24 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         resent = _handle_nack(nack_request)
 
         self.assertEqual(resent, list(datagrams[1:3]))
+
+    def test_handle_ack_resends_from_first_lost_seq(self) -> None:
+        body = b"A" * (FIRST_CHUNK_CAPACITY + MTU_PAYLOAD_SIZE + 5)
+        response = {"status_code": 200, "headers": {}, "body": body}
+
+        request = self._make_request()
+        request.header["version"] = 2
+
+        with patch("akari.remote_proxy.handler._now_timestamp", return_value=0x77):
+            datagrams = _encode_success_datagrams(request, response)
+
+        ack_request = self._make_request()
+        ack_request.packet_type = "ack"
+        ack_request.payload = {"first_lost_seq": 2}
+
+        resent = _handle_ack(ack_request)
+
+        self.assertEqual(resent, list(datagrams[2:]))
 
 
 class RemoteProxyServerTest(unittest.TestCase):
