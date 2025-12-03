@@ -314,46 +314,48 @@ def worker_main(
             idx, url = tasks.get_nowait()
         except queue.Empty:
             return
+        send_count = 2 if getattr(client, "_dual_send", False) else 1
+        for attempt in range(send_count):
+            msg_id = idx if attempt == 0 else idx + 1000000 * (attempt + 1)
+            start = time.perf_counter()
+            try:
+                outcome = client.send_request(url, message_id=msg_id, timestamp=int(time.time()))
+            except Exception as exc:  # noqa: BLE001
+                elapsed = time.perf_counter() - start
+                agg.add_exception()
+                if logger:
+                    logger.write(
+                        {
+                            "event": "exception",
+                            "worker": name,
+                            "url": url,
+                            "message_id": msg_id,
+                            "elapsed_sec": round(elapsed, 4),
+                            "error": f"{exc.__class__.__name__}: {exc}",
+                            "timestamp": time.time(),
+                        }
+                    )
+                continue
 
-        start = time.perf_counter()
-        try:
-            outcome = client.send_request(url, message_id=idx, timestamp=int(time.time()))
-        except Exception as exc:  # noqa: BLE001
             elapsed = time.perf_counter() - start
-            agg.add_exception()
+            agg.add(outcome, elapsed)
             if logger:
                 logger.write(
                     {
-                        "event": "exception",
+                        "event": "outcome",
                         "worker": name,
                         "url": url,
-                        "message_id": idx,
+                        "message_id": msg_id,
                         "elapsed_sec": round(elapsed, 4),
-                        "error": f"{exc.__class__.__name__}: {exc}",
+                        "complete": outcome.complete,
+                        "timed_out": outcome.timed_out,
+                        "status_code": outcome.status_code,
+                        "error": outcome.error,
+                        "bytes_sent": outcome.bytes_sent,
+                        "bytes_received": outcome.bytes_received,
                         "timestamp": time.time(),
                     }
                 )
-            continue
-
-        elapsed = time.perf_counter() - start
-        agg.add(outcome, elapsed)
-        if logger:
-            logger.write(
-                {
-                    "event": "outcome",
-                    "worker": name,
-                    "url": url,
-                    "message_id": idx,
-                    "elapsed_sec": round(elapsed, 4),
-                    "complete": outcome.complete,
-                    "timed_out": outcome.timed_out,
-                    "status_code": outcome.status_code,
-                    "error": outcome.error,
-                    "bytes_sent": outcome.bytes_sent,
-                    "bytes_received": outcome.bytes_received,
-                    "timestamp": time.time(),
-                }
-            )
 
         if delay:
             time.sleep(delay)
@@ -397,6 +399,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="First retry delay (defaults to heartbeat interval if 0)",
     )
+    parser.add_argument("--retry-jitter", type=float, default=0.0, help="Random jitter added to retry scheduling (seconds)")
+    parser.add_argument("--dual-send", action="store_true", help="Send each request twice with different message ids")
     parser.add_argument("--log-file", type=str, help="Append request-level JSON lines to this path")
     parser.add_argument("--summary-file", type=str, help="Write summary JSON to this path")
     parser.add_argument("--demo-server", action="store_true", help="Start a local UDP responder to avoid real traffic")
@@ -450,7 +454,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             heartbeat_backoff=args.heartbeat_backoff,
             max_retries=args.max_retries,
             initial_retry_delay=args.initial_retry_delay,
+            retry_jitter=args.retry_jitter,
         )
+        client._dual_send = args.dual_send  # opt-in dual send
         t = threading.Thread(
             target=worker_main,
             args=(f"worker-{i+1}", client, tasks, agg, args.delay, logger),

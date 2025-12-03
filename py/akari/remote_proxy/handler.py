@@ -30,6 +30,7 @@ from .http_client import (
 LOGGER = logging.getLogger(__name__)
 
 MTU_PAYLOAD_SIZE = 1180
+FEC_CHUNK_SIZE = int(os.environ.get("AKARI_FEC_CHUNK_SIZE", "0")) or None
 FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
 FLAG_HAS_HEADER = 0x40
@@ -45,8 +46,12 @@ ERROR_UNSUPPORTED_PACKET = 254
 RESP_CACHE_TTL = 5.0
 RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
 RESP_CACHE_LOCK = threading.RLock()
-# フラップ耐性向上のための冗長送信回数（環境変数 AKARI_RESP_DUP_COUNT で上書き）
+# フラップ耐性向上のための冗長送信回数（全チャンク）。環境変数 AKARI_RESP_DUP_COUNT で上書き
 RESP_DUP_COUNT = max(1, int(os.environ.get("AKARI_RESP_DUP_COUNT", "1")))
+# 先頭チャンクだけ追加送信する回数（ヘッド冗長）。環境変数 AKARI_HEAD_DUP_COUNT で上書き
+RESP_HEAD_DUP_COUNT = max(1, int(os.environ.get("AKARI_HEAD_DUP_COUNT", "1")))
+# 軽量FEC (XORパリティ) を有効にするフラグ。環境変数 AKARI_FEC_PARITY=1 で有効
+FEC_PARITY_ENABLED = os.environ.get("AKARI_FEC_PARITY", "0") == "1"
 
 # HTTP レスポンスキャッシュ: url -> (expires_at, response)
 HTTP_CACHE_DEFAULT_TTL = 60.0
@@ -158,6 +163,7 @@ def _build_conditional_headers(cached: HttpResponse | None) -> dict[str, str]:
 
 
 def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
+    """Split body into first chunk + tail chunks, optionally using smaller tail size for FEC."""
     if FIRST_CHUNK_CAPACITY <= 0:
         first_chunk = b""
         remaining = body
@@ -165,7 +171,8 @@ def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
         first_chunk = body[:FIRST_CHUNK_CAPACITY]
         remaining = body[FIRST_CHUNK_CAPACITY:]
 
-    tail_chunks = [remaining[i : i + MTU_PAYLOAD_SIZE] for i in range(0, len(remaining), MTU_PAYLOAD_SIZE)]
+    tail_size = FEC_CHUNK_SIZE or MTU_PAYLOAD_SIZE
+    tail_chunks = [remaining[i : i + tail_size] for i in range(0, len(remaining), tail_size)]
     if not body:
         first_chunk = b""
     return first_chunk, tail_chunks
@@ -212,6 +219,19 @@ def encode_header_block(headers: dict[str, str]) -> bytes:
     return b"".join(_encode_header_items(headers))
 
 
+def _build_parity_chunk(chunks: list[bytes]) -> bytes:
+    """Build XOR parity over given chunks (pad shorter chunks with zeros)."""
+    if not chunks:
+        return b""
+    max_len = max(len(c) for c in chunks)
+    parity = bytearray(max_len)
+    for c in chunks:
+        padded = c + b"\x00" * (max_len - len(c))
+        for i, b in enumerate(padded):
+            parity[i] ^= b
+    return bytes(parity)
+
+
 def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) -> Sequence[bytes]:
     body = response["body"]
     body_len = len(body)
@@ -224,31 +244,34 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     flags = FLAG_HAS_HEADER if header_block else 0
 
     if version >= 2:
-        datagrams: list[bytes] = [
-            encode_response_first_chunk_v2_py(
-                response["status_code"],
-                body_len,
-                header_block,
-                first_chunk,
-                message_id,
-                seq_total,
-                flags,
-                timestamp,
-                request.psk,
-            )
-        ]
+        first = encode_response_first_chunk_v2_py(
+            response["status_code"],
+            body_len,
+            header_block,
+            first_chunk,
+            message_id,
+            seq_total,
+            flags,
+            timestamp,
+            request.psk,
+        )
+        datagrams: list[bytes] = [first] * RESP_HEAD_DUP_COUNT
     else:
-        datagrams = [
-            encode_response_first_chunk_py(
-                response["status_code"],
-                body_len,
-                first_chunk,
-                message_id,
-                seq_total,
-                timestamp,
-                request.psk,
-            )
-        ]
+        first = encode_response_first_chunk_py(
+            response["status_code"],
+            body_len,
+            first_chunk,
+            message_id,
+            seq_total,
+            timestamp,
+            request.psk,
+        )
+        datagrams = [first] * RESP_HEAD_DUP_COUNT
+
+    parity_chunk: bytes | None = None
+    if FEC_PARITY_ENABLED:
+        parity_chunk = _build_parity_chunk([first_chunk] + tail_chunks)
+        seq_total += 1
 
     for index, chunk in enumerate(tail_chunks, start=1):
         if version >= 2:
@@ -269,6 +292,32 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                     chunk,
                     message_id,
                     index,
+                    seq_total,
+                    timestamp,
+                    request.psk,
+                )
+            )
+
+    if parity_chunk is not None:
+        parity_seq = seq_total - 1
+        if version >= 2:
+            datagrams.append(
+                encode_response_chunk_v2_py(
+                    parity_chunk,
+                    message_id,
+                    parity_seq,
+                    seq_total,
+                    flags,
+                    timestamp,
+                    request.psk,
+                )
+            )
+        else:
+            datagrams.append(
+                encode_response_chunk_py(
+                    parity_chunk,
+                    message_id,
+                    parity_seq,
                     seq_total,
                     timestamp,
                     request.psk,

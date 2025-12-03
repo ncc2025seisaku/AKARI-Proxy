@@ -62,9 +62,28 @@ class ResponseAccumulator:
     def complete(self) -> bool:
         if self.seq_total is None:
             return False
-        return len(self.chunks) >= self.seq_total
+        if len(self.chunks) >= self.seq_total:
+            return True
+        # FEC parity: 1 missing chunk + parity chunk present
+        if len(self.chunks) == self.seq_total - 1 and (self.seq_total - 1) in self.chunks:
+            return True
+        return False
 
     def assembled_body(self) -> bytes:
+        if self.seq_total is not None and len(self.chunks) == self.seq_total - 1 and (self.seq_total - 1) in self.chunks:
+            # Attempt single-loss recovery using parity chunk at last seq index
+            missing = [seq for seq in range(self.seq_total) if seq not in self.chunks]
+            if len(missing) == 1:
+                parity = bytearray(self.chunks[self.seq_total - 1])
+                for seq, chunk in self.chunks.items():
+                    if seq == self.seq_total - 1:
+                        continue
+                    padded = chunk + b"\x00" * (len(parity) - len(chunk))
+                    for i, b in enumerate(padded):
+                        parity[i] ^= b
+                recovered = bytes(parity)
+                self.chunks[missing[0]] = recovered
+
         return b"".join(self.chunks[seq] for seq in sorted(self.chunks))
 
 
@@ -156,6 +175,7 @@ class AkariUdpClient:
         heartbeat_backoff: float = 1.5,
         max_retries: int = 0,
         initial_retry_delay: float = 0.0,
+        retry_jitter: float = 0.0,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -168,6 +188,7 @@ class AkariUdpClient:
         self._heartbeat_backoff = heartbeat_backoff if heartbeat_backoff > 0 else 1.0
         self._max_retries = max(0, int(max_retries))
         self._initial_retry_delay = max(0.0, initial_retry_delay if initial_retry_delay > 0 else heartbeat_interval)
+        self._retry_jitter = max(0.0, retry_jitter)
 
     def send_request(
         self,
@@ -215,7 +236,8 @@ class AkariUdpClient:
                     sock.sendto(datagram, self._remote_addr)
                     retries += 1
                     retry_delay = retry_delay * self._heartbeat_backoff if retry_delay else heartbeat_interval
-                    next_probe = time.monotonic() + max(retry_delay, heartbeat_interval)
+                    jitter = random.random() * self._retry_jitter if self._retry_jitter else 0.0
+                    next_probe = time.monotonic() + max(retry_delay, heartbeat_interval) + jitter
 
                 remaining = None
                 if deadline is not None:
