@@ -80,6 +80,7 @@ SCENARIOS: list[Scenario] = [
             "initial_retry_delay": 0.05,
             "heartbeat_backoff": 1.1,
             "retry_jitter": 0.05,
+            "max_nack_rounds": 6,
         },
     ),
     Scenario(
@@ -114,9 +115,9 @@ SCENARIOS: list[Scenario] = [
         key="gz_large_body",
         description="10MBクラスの巨大レスポンスをdemo-serverで返し、デコード/転送負荷を見る。",
         overrides={
-            "requests": 60,
-            "concurrency": 12,
-            "timeout": 8.0,
+            "requests": 10,
+            "concurrency": 4,
+            "timeout": 20.0,
             "demo_body_size": 10_000_000,
             "delay": 0.01,
         },

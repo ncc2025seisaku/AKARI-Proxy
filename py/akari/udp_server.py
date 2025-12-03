@@ -1,10 +1,10 @@
-"""外部プロキシ側で AKARI-UDP パケットを受信し、レスポンスを返すサーバ。"""
+"""Lightweight UDP server wrapper for AKARI-UDP (demo / load testing)."""
 
 from __future__ import annotations
 
 import logging
-import socket
 import os
+import socket
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -12,11 +12,18 @@ from akari_udp_py import (
     decode_packet_py,
     encode_error_py,
     encode_error_v2_py,
+    encode_response_chunk_py,
+    encode_response_chunk_v2_py,
     encode_response_first_chunk_py,
     encode_response_first_chunk_v2_py,
 )
 
 LOGGER = logging.getLogger(__name__)
+# Approx safe UDP payload to avoid IP fragmentation
+MTU_PAYLOAD_SIZE = 1180
+# status(2) + hdr_len/reserved(2) + body_len(4)
+FIRST_CHUNK_METADATA_LEN = 8
+FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
 
 
 @dataclass
@@ -31,7 +38,7 @@ class IncomingRequest:
 
 
 class AkariUdpServer:
-    """単発リクエストを処理するための簡易 UDP サーバ。"""
+    """Minimal UDP server that decodes AKARI-UDP and delegates to a handler."""
 
     buffer_size: int
     address: tuple[str, int]
@@ -62,8 +69,7 @@ class AkariUdpServer:
         self.address = self._sock.getsockname()
 
     def handle_next(self) -> IncomingRequest | None:
-        """1 回だけデータを受信してハンドラに渡す。"""
-
+        """Receive one datagram, dispatch to handler, send responses."""
         try:
             data, client_addr = self._sock.recvfrom(self.buffer_size)
         except ConnectionResetError:
@@ -86,11 +92,11 @@ class AkariUdpServer:
         for datagram in self._handler(request):
             datagram_bytes = bytes(datagram)
             try:
-                parsed = decode_packet_py(datagram_bytes, self._psk)
-                payload = parsed.get("payload", {})
+                parsed_resp = decode_packet_py(datagram_bytes, self._psk)
+                payload = parsed_resp.get("payload", {})
                 LOGGER.info(
                     "send packet type=%s seq=%s/%s len=%d to=%s",
-                    parsed.get("type"),
+                    parsed_resp.get("type"),
                     payload.get("seq"),
                     payload.get("seq_total"),
                     len(datagram_bytes),
@@ -117,34 +123,50 @@ def encode_success_response(
     body: bytes,
     *,
     status_code: int = 200,
-    seq_total: int = 1,
 ) -> Sequence[bytes]:
-    """リクエストに対する単一チャンクのレスポンスを組み立てる。"""
+    """Chunk and send a response body; avoids u16 payload limits."""
 
     is_v2 = int(request.header.get("version", 1)) >= 2
+    body_len = len(body)
+    first_chunk = body[:FIRST_CHUNK_CAPACITY] if FIRST_CHUNK_CAPACITY > 0 else b""
+    tail = body[FIRST_CHUNK_CAPACITY:]
+    tail_chunks = [tail[i : i + MTU_PAYLOAD_SIZE] for i in range(0, len(tail), MTU_PAYLOAD_SIZE)]
+    if len(tail_chunks) + 1 > 0xFFFF:
+        raise ValueError("response too large to fit in u16 seq_total; reduce body size or stream differently")
+    seq_total = max(1, 1 + len(tail_chunks))
+    message_id = request.header["message_id"]
+    timestamp = request.header["timestamp"]
+
     if is_v2:
-        datagram = encode_response_first_chunk_v2_py(
+        first = encode_response_first_chunk_v2_py(
             status_code,
-            len(body),
+            body_len,
             b"",
-            body,
-            request.header["message_id"],
+            first_chunk,
+            message_id,
             seq_total,
             0,
-            request.header["timestamp"],
+            timestamp,
             request.psk,
         )
     else:
-        datagram = encode_response_first_chunk_py(
+        first = encode_response_first_chunk_py(
             status_code,
-            len(body),
-            body,
-            request.header["message_id"],
+            body_len,
+            first_chunk,
+            message_id,
             seq_total,
-            request.header["timestamp"],
+            timestamp,
             request.psk,
         )
-    return (datagram,)
+
+    datagrams = [first]
+    for idx, chunk in enumerate(tail_chunks, start=1):
+        if is_v2:
+            datagrams.append(encode_response_chunk_v2_py(chunk, message_id, idx, seq_total, 0, timestamp, request.psk))
+        else:
+            datagrams.append(encode_response_chunk_py(chunk, message_id, idx, seq_total, timestamp, request.psk))
+    return tuple(datagrams)
 
 
 def encode_error_response(
@@ -154,7 +176,7 @@ def encode_error_response(
     http_status: int,
     message: str,
 ) -> Sequence[bytes]:
-    """リクエストに対するエラーを返すパケットを組み立てる。"""
+    """Encode an error response packet."""
 
     is_v2 = int(request.header.get("version", 1)) >= 2
     if is_v2:

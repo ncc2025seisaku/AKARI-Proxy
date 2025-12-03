@@ -260,7 +260,7 @@ class DemoServer:
         url = request.payload.get("url", "")
         if "error" in url:
             return encode_error_response(request, 2, 502, "demo error")
-        return encode_success_response(request, self._body, status_code=200, seq_total=1)
+        return encode_success_response(request, self._body, status_code=200)
 
 
 class LogWriter:
@@ -420,6 +420,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
     parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
+    parser.add_argument(
+        "--compress-response",
+        choices=["none", "gzip"],
+        default="none",
+        help="Compress demo-server response body (for large payload simulations)",
+    )
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
 
@@ -439,10 +445,16 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
         if args.demo_body_file:
             body_bytes = Path(args.demo_body_file).read_bytes()
         elif args.demo_body_size and args.demo_body_size > 0:
-            seed = args.demo_body if args.demo_body else "x"
-            body_bytes = seed.encode("utf-8") * args.demo_body_size
+            seed = args.demo_body.encode("utf-8") if args.demo_body else b"x"
+            seed_byte = seed[:1] or b"x"
+            body_bytes = seed_byte * args.demo_body_size  # ensure exact byte length, avoid accidental multiplier
         else:
             body_bytes = args.demo_body.encode("utf-8")
+        if args.compress_response == "gzip":
+            import gzip
+
+            body_bytes = gzip.compress(body_bytes)
+            LOGGER.info("demo body compressed with gzip: %s -> %s bytes", args.demo_body_size or len(seed_byte), len(body_bytes))
         server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address
