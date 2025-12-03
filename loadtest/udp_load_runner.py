@@ -453,8 +453,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
         if args.compress_response == "gzip":
             import gzip
 
+            orig_len = len(body_bytes)
             body_bytes = gzip.compress(body_bytes)
-            LOGGER.info("demo body compressed with gzip: %s -> %s bytes", args.demo_body_size or len(seed_byte), len(body_bytes))
+            LOGGER.info("demo body compressed with gzip: %s -> %s bytes", orig_len, len(body_bytes))
         server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address
