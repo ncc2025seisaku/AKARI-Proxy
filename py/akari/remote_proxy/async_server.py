@@ -44,6 +44,18 @@ class RemoteProxyProtocol(asyncio.DatagramProtocol):
     async def _process_datagram(self, data: bytes, addr) -> None:
         try:
             parsed = await self.loop.run_in_executor(self.executor, decode_packet_py, data, self.psk)
+        except ValueError as exc:
+            message = str(exc) or exc.__class__.__name__
+            if message in {"HMAC mismatch", "invalid PSK"}:
+                LOGGER.warning("discard packet from %s: %s (PSK mismatch?)", addr, message)
+            else:
+                LOGGER.warning("discard packet from %s: %s", addr, message)
+            return
+        except Exception:
+            LOGGER.exception("unexpected error while processing datagram from %s", addr)
+            return
+
+        try:
             request = IncomingRequest(
                 header=parsed["header"],
                 payload=parsed["payload"],
