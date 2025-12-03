@@ -1,15 +1,15 @@
 {
-  "started_at": 1764743772.469253,
-  "finished_at": 1764743858.7100763,
+  "started_at": 1764744881.567816,
+  "finished_at": 1764744949.899849,
   "records": [
     {
-      "timestamp": 1764743775.5057547,
+      "timestamp": 1764744884.648547,
       "iteration": 1,
       "scenario": "baseline_demo",
       "description": "Sanity check on local demo server (no loss/jitter).",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 80,
         "concurrency": 8,
@@ -37,22 +37,22 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 5200,
-        "bytes_received": 6480,
-        "latency_avg_sec": 0.0021,
-        "latency_p95_sec": 0.0037,
-        "latency_p99_sec": 0.0049,
-        "elapsed_sec": 0.015,
-        "rps": 5514.31
+        "bytes_received": 6000,
+        "latency_avg_sec": 0.0073,
+        "latency_p95_sec": 0.011,
+        "latency_p99_sec": 0.0121,
+        "elapsed_sec": 0.073,
+        "rps": 1090.12
       }
     },
     {
-      "timestamp": 1764743784.3104699,
+      "timestamp": 1764744893.1651258,
       "iteration": 1,
       "scenario": "delay_loss_extreme",
       "description": "3s delay + 20% loss + jitter 300ms: checklistの遅延/ロス要件を再現。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 200,
         "concurrency": 16,
@@ -75,27 +75,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 153,
-        "timeout": 47,
+        "success": 163,
+        "timeout": 37,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 12393,
-        "latency_avg_sec": 0.1522,
-        "latency_p95_sec": 0.2905,
-        "latency_p99_sec": 0.2969,
-        "elapsed_sec": 3.207,
-        "rps": 62.37
+        "bytes_received": 12225,
+        "latency_avg_sec": 0.1467,
+        "latency_p95_sec": 0.2822,
+        "latency_p99_sec": 0.3006,
+        "elapsed_sec": 2.941,
+        "rps": 68.01
       }
     },
     {
-      "timestamp": 1764743791.3334317,
+      "timestamp": 1764744900.3798265,
       "iteration": 1,
       "scenario": "jitter_spike",
       "description": "ジッター大 (350ms) で順序逆転・再送暴走をチェック。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 200,
         "concurrency": 16,
@@ -123,22 +123,22 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 16200,
-        "latency_avg_sec": 0.1678,
-        "latency_p95_sec": 0.3264,
-        "latency_p99_sec": 0.3484,
-        "elapsed_sec": 2.268,
-        "rps": 88.2
+        "bytes_received": 15000,
+        "latency_avg_sec": 0.1859,
+        "latency_p95_sec": 0.3396,
+        "latency_p99_sec": 0.3511,
+        "elapsed_sec": 2.461,
+        "rps": 81.28
       }
     },
     {
-      "timestamp": 1764743797.443079,
+      "timestamp": 1764744906.5048177,
       "iteration": 1,
       "scenario": "loss_heavy",
       "description": "ロス25% で再送/バックオフの安定性を確認。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 220,
         "concurrency": 20,
@@ -161,27 +161,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 160,
-        "timeout": 60,
+        "success": 178,
+        "timeout": 42,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 14300,
-        "bytes_received": 12960,
-        "latency_avg_sec": 0.0037,
-        "latency_p95_sec": 0.0122,
-        "latency_p99_sec": 0.0143,
-        "elapsed_sec": 1.58,
-        "rps": 139.22
+        "bytes_received": 13350,
+        "latency_avg_sec": 0.0097,
+        "latency_p95_sec": 0.0276,
+        "latency_p99_sec": 0.0298,
+        "elapsed_sec": 1.59,
+        "rps": 138.38
       }
     },
     {
-      "timestamp": 1764743801.8136683,
+      "timestamp": 1764744910.989579,
       "iteration": 1,
       "scenario": "burst_traffic",
       "description": "高並列・高PPSバースト（マルチストリームとburst耐性）。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 800,
         "concurrency": 48,
@@ -204,27 +204,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 773,
-        "timeout": 27,
+        "success": 765,
+        "timeout": 35,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 52000,
-        "bytes_received": 62613,
-        "latency_avg_sec": 0.0128,
-        "latency_p95_sec": 0.0239,
-        "latency_p99_sec": 0.0306,
-        "elapsed_sec": 0.791,
-        "rps": 1011.98
+        "bytes_received": 57375,
+        "latency_avg_sec": 0.019,
+        "latency_p95_sec": 0.0365,
+        "latency_p99_sec": 0.0434,
+        "elapsed_sec": 0.943,
+        "rps": 848.74
       }
     },
     {
-      "timestamp": 1764743806.9581308,
+      "timestamp": 1764744916.155925,
       "iteration": 1,
       "scenario": "multistream_sustained",
       "description": "中負荷で長めの持続（再送バッファ枯渇/リークを観察）。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 400,
         "concurrency": 32,
@@ -252,22 +252,22 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 26000,
-        "bytes_received": 32400,
-        "latency_avg_sec": 0.0409,
-        "latency_p95_sec": 0.0775,
-        "latency_p99_sec": 0.0807,
-        "elapsed_sec": 0.679,
-        "rps": 589.41
+        "bytes_received": 30000,
+        "latency_avg_sec": 0.0427,
+        "latency_p95_sec": 0.0788,
+        "latency_p99_sec": 0.0874,
+        "elapsed_sec": 0.706,
+        "rps": 566.2
       }
     },
     {
-      "timestamp": 1764743813.305123,
+      "timestamp": 1764744922.470747,
       "iteration": 1,
       "scenario": "flap_drop",
       "description": "断続的ドロップ（20%）＋小さな待ちを挟み、断続断後の復帰を確認。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 150,
         "concurrency": 12,
@@ -290,27 +290,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 121,
-        "timeout": 29,
+        "success": 120,
+        "timeout": 30,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 9750,
-        "bytes_received": 9801,
-        "latency_avg_sec": 0.0013,
-        "latency_p95_sec": 0.0024,
-        "latency_p99_sec": 0.0036,
-        "elapsed_sec": 1.825,
-        "rps": 82.17
+        "bytes_received": 9000,
+        "latency_avg_sec": 0.0022,
+        "latency_p95_sec": 0.0045,
+        "latency_p99_sec": 0.0078,
+        "elapsed_sec": 1.799,
+        "rps": 83.37
       }
     },
     {
-      "timestamp": 1764743820.4080312,
+      "timestamp": 1764744929.6049018,
       "iteration": 1,
       "scenario": "flap_harsh",
       "description": "強いフラップ（約1.3秒周期で0.25秒ブラックアウト）＋軽ロス。復元性を重点確認。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 200,
         "concurrency": 16,
@@ -333,27 +333,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 174,
-        "timeout": 26,
+        "success": 176,
+        "timeout": 24,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 14094,
-        "latency_avg_sec": 0.0041,
-        "latency_p95_sec": 0.0059,
-        "latency_p99_sec": 0.007,
-        "elapsed_sec": 1.079,
-        "rps": 185.28
+        "bytes_received": 13200,
+        "latency_avg_sec": 0.0071,
+        "latency_p95_sec": 0.0155,
+        "latency_p99_sec": 0.0217,
+        "elapsed_sec": 1.111,
+        "rps": 180.01
       }
     },
     {
-      "timestamp": 1764743827.0075862,
+      "timestamp": 1764744936.2444284,
       "iteration": 1,
       "scenario": "flap_recovery_tuned",
       "description": "フラップ緩和版（約1.3秒周期で0.12秒断＋再送/ハートビート強化）で回復率を確認。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 200,
         "concurrency": 16,
@@ -376,27 +376,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 171,
-        "timeout": 29,
+        "success": 174,
+        "timeout": 26,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 13851,
-        "latency_avg_sec": 0.0036,
-        "latency_p95_sec": 0.0071,
-        "latency_p99_sec": 0.0074,
-        "elapsed_sec": 1.068,
-        "rps": 187.21
+        "bytes_received": 13050,
+        "latency_avg_sec": 0.0061,
+        "latency_p95_sec": 0.0097,
+        "latency_p99_sec": 0.0103,
+        "elapsed_sec": 1.113,
+        "rps": 179.66
       }
     },
     {
-      "timestamp": 1764743832.370178,
+      "timestamp": 1764744941.6671116,
       "iteration": 1,
       "scenario": "mtu_variation_like",
       "description": "MTU変動の近似（フラグメント相当の小さいチャンクを強制受信）。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 240,
         "concurrency": 24,
@@ -419,27 +419,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 232,
-        "timeout": 8,
+        "success": 223,
+        "timeout": 17,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 15600,
-        "bytes_received": 18792,
-        "latency_avg_sec": 0.0279,
-        "latency_p95_sec": 0.0491,
-        "latency_p99_sec": 0.0517,
-        "elapsed_sec": 0.689,
-        "rps": 348.21
+        "bytes_received": 16725,
+        "latency_avg_sec": 0.0291,
+        "latency_p95_sec": 0.051,
+        "latency_p99_sec": 0.0549,
+        "elapsed_sec": 0.831,
+        "rps": 288.94
       }
     },
     {
-      "timestamp": 1764743852.5013485,
+      "timestamp": 1764744942.9835997,
       "iteration": 1,
       "scenario": "gz_large_body",
       "description": "10MBクラスの巨大レスポンスをdemo-serverで返し、デコード/転送負荷を見る。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 10,
         "concurrency": 4,
@@ -462,27 +462,27 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 10,
-        "timeout": 0,
+        "success": 6,
+        "timeout": 4,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 650,
-        "bytes_received": 101190,
-        "latency_avg_sec": 0.0125,
-        "latency_p95_sec": 0.0254,
-        "latency_p99_sec": 0.0254,
-        "elapsed_sec": 0.07,
-        "rps": 143.58
+        "bytes_received": 546,
+        "latency_avg_sec": 0.382,
+        "latency_p95_sec": 0.5026,
+        "latency_p99_sec": 0.5026,
+        "elapsed_sec": 1.295,
+        "rps": 7.72
       }
     },
     {
-      "timestamp": 1764743858.7100763,
+      "timestamp": 1764744949.8988404,
       "iteration": 1,
       "scenario": "sw_fetch_3000_like",
       "description": "3000本相当の大量フェッチを模擬（軽いロス付き）。",
       "runtime": {
         "host": "127.0.0.1",
-        "port": 14600,
+        "port": 0,
         "protocol_version": 2,
         "requests": 3000,
         "concurrency": 120,
@@ -505,17 +505,17 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 2935,
-        "timeout": 65,
+        "success": 2932,
+        "timeout": 68,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 195000,
-        "bytes_received": 237735,
-        "latency_avg_sec": 0.0366,
-        "latency_p95_sec": 0.0555,
-        "latency_p99_sec": 0.063,
-        "elapsed_sec": 1.629,
-        "rps": 1841.2
+        "bytes_received": 219900,
+        "latency_avg_sec": 0.0646,
+        "latency_p95_sec": 0.0852,
+        "latency_p99_sec": 0.0926,
+        "elapsed_sec": 2.319,
+        "rps": 1293.47
       }
     }
   ]
