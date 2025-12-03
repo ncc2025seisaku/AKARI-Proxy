@@ -388,7 +388,7 @@
     <main>
       <div id="searchPanel" class="liquid-glass">
         <label class="sr-only" for="query"></label>
-<div class="input-area">
+        <div class="input-area">
           <canvas id="glassCanvas"></canvas>
           <input
             id="query"
@@ -398,14 +398,6 @@
             autocomplete="off"
           />
           <button id="submitSearch" type="button">OPEN</button>
-          <label class="toggle inline-toggle">
-            <input id="toggleEncrypt" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">Encrypt (E)</span>
-              <span class="toggle-desc">UDP ペイロードを暗号化</span>
-            </div>
-          </label>
         </div>
       </div>
       <div id="filterPanel" class="liquid-glass filter-card">
@@ -447,6 +439,14 @@
             <div class="toggle-body">
               <span class="toggle-title">Other</span>
               <span class="toggle-desc">その他のリソース (拡張子なし含む)</span>
+            </div>
+          </label>
+          <label class="toggle">
+            <input id="toggleEncrypt" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">Encrypt (E)</span>
+              <span class="toggle-desc">UDP ペイロードを暗号化</span>
             </div>
           </label>
         </div>
@@ -694,6 +694,8 @@
         }
       });
 
+      attachEncryptHandler();
+      loadEncryptState();
       attachToggleHandlers();
       syncFilterFromServer();
 
