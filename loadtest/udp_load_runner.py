@@ -94,13 +94,26 @@ class LoadTestClient(AkariUdpClient):
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
             nack_sent = 0
+            retries = 0
+            heartbeat_interval = self._heartbeat_interval
+            next_probe = (
+                last_received + heartbeat_interval if heartbeat_interval > 0 and self._max_retries > 0 else None
+            )
+            retry_delay = self._initial_retry_delay if self._initial_retry_delay > 0 else heartbeat_interval
 
             while True:
+                if next_probe is not None and time.monotonic() >= next_probe and retries < self._max_retries:
+                    sock.sendto(datagram, self._remote_addr)
+                    retries += 1
+                    retry_delay = retry_delay * self._heartbeat_backoff if retry_delay else heartbeat_interval
+                    jitter = random.random() * self._retry_jitter if self._retry_jitter else 0.0
+                    next_probe = time.monotonic() + max(retry_delay, heartbeat_interval) + jitter
+
                 remaining = self._timeout - (time.monotonic() - last_received)
                 if remaining <= 0:
                     timed_out = True
                     break
-                sock.settimeout(remaining)
+                sock.settimeout(max(min(0.5, remaining), 0.05))
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
