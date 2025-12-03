@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
 import os
 import threading
 import time
+import zlib
 from typing import Iterable, Sequence
+
+import brotli
 
 from akari_udp_py import (
     encode_error_py,
@@ -219,6 +223,43 @@ def encode_header_block(headers: dict[str, str]) -> bytes:
     return b"".join(_encode_header_items(headers))
 
 
+def _decode_content_encoding(body: bytes, headers: dict[str, str]) -> tuple[bytes, dict[str, str]]:
+    """If upstream returned compressed body, decode it and drop the encoding header."""
+    normalized_headers = {key: value for key, value in headers.items()}
+    encoding = normalized_headers.get("content-encoding", normalized_headers.get("Content-Encoding", "")).lower()
+    if encoding:
+        normalized_headers.pop("content-encoding", None)
+        normalized_headers.pop("Content-Encoding", None)
+    try:
+        if encoding == "br":
+            body = brotli.decompress(body)
+        elif encoding == "gzip":
+            body = gzip.decompress(body)
+        elif encoding == "deflate":
+            body = zlib.decompress(body)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("failed to decode upstream content-encoding=%s: %s", encoding, exc)
+    normalized_headers["content-length"] = str(len(body))
+    return body, normalized_headers
+
+
+def _prepare_transport_body(
+    body: bytes,
+    headers: dict[str, str],
+    *,
+    compress: bool,
+) -> tuple[bytes, dict[str, str], int]:
+    """Normalize upstream encoding, then optionally compress with Brotli for transport."""
+    decoded_body, normalized_headers = _decode_content_encoding(body, headers)
+    original_len = len(decoded_body)
+    headers_for_wire = dict(normalized_headers)
+    if compress:
+        decoded_body = brotli.compress(decoded_body)
+        headers_for_wire["content-encoding"] = "br"
+    headers_for_wire["content-length"] = str(original_len)
+    return decoded_body, headers_for_wire, original_len
+
+
 def _build_parity_chunk(chunks: list[bytes]) -> bytes:
     """Build XOR parity over given chunks (pad shorter chunks with zeros)."""
     if not chunks:
@@ -233,14 +274,16 @@ def _build_parity_chunk(chunks: list[bytes]) -> bytes:
 
 
 def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) -> Sequence[bytes]:
-    body = response["body"]
-    body_len = len(body)
+    version = int(request.header.get("version", 1))
+    compress_transport = version >= 2
+    body_for_wire, headers_for_wire, body_len = _prepare_transport_body(
+        response["body"], response.get("headers", {}), compress=compress_transport
+    )
     timestamp = _now_timestamp()
-    first_chunk, tail_chunks = _split_body(body)
+    first_chunk, tail_chunks = _split_body(body_for_wire)
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
-    version = int(request.header.get("version", 1))
-    header_block = encode_header_block(response["headers"])
+    header_block = encode_header_block(headers_for_wire) if compress_transport else b""
     flags = FLAG_HAS_HEADER if header_block else 0
 
     if version >= 2:
@@ -519,6 +562,13 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             "headers": merged_headers,
             "body": cached_response.get("body", b""),
         }
+
+    body_decoded, headers_decoded = _decode_content_encoding(response.get("body", b""), dict(response.get("headers", {})))
+    response = {
+        "status_code": response.get("status_code", 200),
+        "headers": headers_decoded,
+        "body": body_decoded,
+    }
 
     LOGGER.info(
         "success fetch message_id=%s status=%s body_len=%s",

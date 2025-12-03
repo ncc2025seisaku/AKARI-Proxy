@@ -420,12 +420,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
     parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
-    parser.add_argument(
-        "--compress-response",
-        choices=["none", "gzip"],
-        default="none",
-        help="Compress demo-server response body (for large payload simulations)",
-    )
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
 
@@ -450,12 +444,6 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             body_bytes = seed_byte * args.demo_body_size  # ensure exact byte length, avoid accidental multiplier
         else:
             body_bytes = args.demo_body.encode("utf-8")
-        if args.compress_response == "gzip":
-            import gzip
-
-            orig_len = len(body_bytes)
-            body_bytes = gzip.compress(body_bytes)
-            LOGGER.info("demo body compressed with gzip: %s -> %s bytes", orig_len, len(body_bytes))
         server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address

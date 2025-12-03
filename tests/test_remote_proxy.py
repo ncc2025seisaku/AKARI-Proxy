@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Sequence
 from unittest.mock import patch
 
+import brotli
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py"))
 
 from akari import AkariUdpClient
@@ -74,10 +76,8 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         self.assertEqual(first_payload["seq_total"], expected_total)
         self.assertEqual(first_payload["status_code"], 206)
         self.assertEqual(first_payload["body_len"], len(body))
-        self.assertEqual(first_payload["chunk"], body[:FIRST_CHUNK_CAPACITY])
-
         assembled = b"".join(packet["payload"]["chunk"] for packet in parsed_packets)
-        self.assertEqual(assembled, body)
+        self.assertEqual(brotli.decompress(assembled), body)
 
     def test_handle_request_error_mapping(self) -> None:
         cases = [
@@ -182,7 +182,7 @@ class HttpCacheTest(unittest.TestCase):
 
         fetch_mock.assert_not_called()
         assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
-        self.assertEqual(assembled, response["body"])
+        self.assertEqual(brotli.decompress(assembled), response["body"])
 
     def test_cache_expires_after_ttl(self) -> None:
         first = {"status_code": 200, "headers": {"cache-control": "max-age=1"}, "body": b"v1"}
@@ -200,7 +200,7 @@ class HttpCacheTest(unittest.TestCase):
 
         fetch_mock.assert_called_once()
         assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
-        self.assertEqual(assembled, second["body"])
+        self.assertEqual(brotli.decompress(assembled), second["body"])
 
     def test_revalidate_with_etag_and_last_modified(self) -> None:
         first = {
@@ -232,7 +232,7 @@ class HttpCacheTest(unittest.TestCase):
         self.assertEqual(calls[1], {"If-None-Match": "abc", "If-Modified-Since": "Wed, 01 Jan 2020 00:00:00 GMT"})
 
         assembled = b"".join(self._decode(datagram)["payload"]["chunk"] for datagram in datagrams)
-        self.assertEqual(assembled, first["body"])
+        self.assertEqual(brotli.decompress(assembled), first["body"])
 
 
 class RemoteProxyServerTest(unittest.TestCase):

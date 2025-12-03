@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
+import random
 import socket
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence, Tuple
+
+import brotli
 
 from akari_udp_py import (
     decode_packet_py,
@@ -25,6 +30,30 @@ def _to_native(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_to_native(val) for val in value]
     return value
+
+
+def _decompress_body(body: bytes, headers: dict[str, str] | None) -> tuple[bytes, dict[str, str] | None]:
+    """Decode compressed payloads and normalize headers to the decompressed representation."""
+    if not headers:
+        return body, headers
+    encoding = headers.get("content-encoding", headers.get("Content-Encoding", "")).lower()
+    normalized_headers = dict(headers)
+    if "content-encoding" in normalized_headers:
+        normalized_headers.pop("content-encoding", None)
+    if "Content-Encoding" in normalized_headers:
+        normalized_headers.pop("Content-Encoding", None)
+
+    try:
+        if encoding == "br":
+            body = brotli.decompress(body)
+        elif encoding == "gzip":
+            body = gzip.decompress(body)
+        elif encoding == "deflate":
+            body = zlib.decompress(body)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("failed to decompress body with encoding=%s: %s", encoding, exc)
+    normalized_headers["content-length"] = str(len(body))
+    return body, normalized_headers
 
 
 @dataclass
@@ -286,12 +315,15 @@ class AkariUdpClient:
                     break
 
         body = accumulator.assembled_body() if accumulator.complete else None
+        headers = accumulator.headers
+        if body is not None:
+            body, headers = _decompress_body(body, headers)
         return ResponseOutcome(
             message_id=message_id,
             packets=packets,
             body=body,
             status_code=accumulator.status_code,
-            headers=accumulator.headers,
+            headers=headers,
             error=error_payload,
             complete=accumulator.complete,
             timed_out=False,

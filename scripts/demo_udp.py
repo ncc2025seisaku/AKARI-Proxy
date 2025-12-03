@@ -84,7 +84,7 @@ class DemoServer:
                 message="demo error",
             )
         body = f"demo response for {url}".encode("utf-8")
-        return encode_success_response(request, body, status_code=200, seq_total=1)
+        return encode_success_response(request, body, status_code=200)
 
 
 class DemoRunner:

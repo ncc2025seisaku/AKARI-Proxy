@@ -8,6 +8,8 @@ import socket
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+import brotli
+
 from akari_udp_py import (
     decode_packet_py,
     encode_error_py,
@@ -24,6 +26,20 @@ MTU_PAYLOAD_SIZE = 1180
 # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_METADATA_LEN = 8
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
+
+STATIC_HEADER_IDS: dict[str, int] = {
+    "content-type": 1,
+    "content-length": 2,
+    "cache-control": 3,
+    "etag": 4,
+    "last-modified": 5,
+    "date": 6,
+    "server": 7,
+    "content-encoding": 8,
+    "accept-ranges": 9,
+    "set-cookie": 10,
+    "location": 11,
+}
 
 
 @dataclass
@@ -118,6 +134,35 @@ class AkariUdpServer:
         self.close()
 
 
+def _encode_header_items(headers: Mapping[str, str]) -> list[bytes]:
+    """Build header items for the v2 header block using the static table."""
+    items: list[bytes] = []
+    for name, value in headers.items():
+        lname = name.lower()
+        value_bytes = str(value).encode("utf-8", errors="replace")
+        if len(value_bytes) > 0xFFFF:
+            continue
+        if lname in STATIC_HEADER_IDS:
+            items.append(bytes([STATIC_HEADER_IDS[lname]]) + len(value_bytes).to_bytes(2, "big") + value_bytes)
+        else:
+            name_bytes = lname.encode("utf-8", errors="replace")
+            if len(name_bytes) > 0xFF:
+                continue
+            items.append(
+                b"\x00"
+                + bytes([len(name_bytes)])
+                + name_bytes
+                + len(value_bytes).to_bytes(2, "big")
+                + value_bytes
+            )
+    return items
+
+
+def _encode_header_block(headers: Mapping[str, str]) -> bytes:
+    """Pack headers into the AKARI static-table header block format."""
+    return b"".join(_encode_header_items(headers))
+
+
 def encode_success_response(
     request: IncomingRequest,
     body: bytes,
@@ -127,9 +172,17 @@ def encode_success_response(
     """Chunk and send a response body; avoids u16 payload limits."""
 
     is_v2 = int(request.header.get("version", 1)) >= 2
-    body_len = len(body)
-    first_chunk = body[:FIRST_CHUNK_CAPACITY] if FIRST_CHUNK_CAPACITY > 0 else b""
-    tail = body[FIRST_CHUNK_CAPACITY:]
+    original_len = len(body)
+    header_block = b""
+    if is_v2:
+        # Compress transport payload with Brotli; body_len carries the original size for visibility.
+        body_for_wire = brotli.compress(body)
+        header_block = _encode_header_block({"content-encoding": "br", "content-length": str(original_len)})
+    else:
+        body_for_wire = body
+
+    first_chunk = body_for_wire[:FIRST_CHUNK_CAPACITY] if FIRST_CHUNK_CAPACITY > 0 else b""
+    tail = body_for_wire[FIRST_CHUNK_CAPACITY:]
     tail_chunks = [tail[i : i + MTU_PAYLOAD_SIZE] for i in range(0, len(tail), MTU_PAYLOAD_SIZE)]
     if len(tail_chunks) + 1 > 0xFFFF:
         raise ValueError("response too large to fit in u16 seq_total; reduce body size or stream differently")
@@ -140,8 +193,8 @@ def encode_success_response(
     if is_v2:
         first = encode_response_first_chunk_v2_py(
             status_code,
-            body_len,
-            b"",
+            original_len,
+            header_block,
             first_chunk,
             message_id,
             seq_total,
@@ -152,7 +205,7 @@ def encode_success_response(
     else:
         first = encode_response_first_chunk_py(
             status_code,
-            body_len,
+            original_len,
             first_chunk,
             message_id,
             seq_total,
