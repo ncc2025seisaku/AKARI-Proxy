@@ -1,4 +1,4 @@
-"""AKARI-UDP client used by the local proxy to talk to the remote proxy."""
+﻿"""AKARI-UDP client used by the local proxy to talk to the remote proxy."""
 
 from __future__ import annotations
 
@@ -241,13 +241,12 @@ class AkariUdpClient:
         error_payload: Mapping[str, Any] | None = None
         bytes_sent = len(datagram)
         bytes_received = 0
-        start_ts = time.monotonic()
-        deadline = start_ts + self._timeout if self._timeout else None
+        last_received = time.monotonic()
+        expires_at = last_received + self._timeout if self._timeout else None
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(None)
             sock.sendto(datagram, self._remote_addr)
-            last_received = time.monotonic()
             nacks_sent = 0
             retries = 0
             heartbeat_interval = self._heartbeat_interval
@@ -256,12 +255,13 @@ class AkariUdpClient:
             )
             retry_delay = self._initial_retry_delay if self._initial_retry_delay > 0 else heartbeat_interval
             while True:
-                if deadline is not None and time.monotonic() >= deadline:
+                now = time.monotonic()
+                if expires_at is not None and now >= expires_at:
                     timed_out = True
                     break
 
-                # ハートビート/再送を適応的に送る（フラップ対策）
-                if next_probe is not None and time.monotonic() >= next_probe and retries < self._max_retries:
+                # ハートビート再送を適応的に送る（フラップ対策）
+                if next_probe is not None and now >= next_probe and retries < self._max_retries:
                     sock.sendto(datagram, self._remote_addr)
                     retries += 1
                     retry_delay = retry_delay * self._heartbeat_backoff if retry_delay else heartbeat_interval
@@ -269,12 +269,15 @@ class AkariUdpClient:
                     next_probe = time.monotonic() + max(retry_delay, heartbeat_interval) + jitter
 
                 remaining = None
-                if deadline is not None:
-                    remaining = max(deadline - time.monotonic(), 0.0)
+                if expires_at is not None:
+                    remaining = max(expires_at - now, 0.0)
                 sock.settimeout(0.5 if remaining is None else max(min(0.5, remaining), 0.05))
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
+                    if expires_at is not None and time.monotonic() >= expires_at:
+                        timed_out = True
+                        break
                     continue
 
                 bytes_received += len(data)
@@ -282,6 +285,8 @@ class AkariUdpClient:
                 native = _to_native(parsed)
                 packets.append(native)
                 last_received = time.monotonic()
+                if self._timeout is not None:
+                    expires_at = last_received + self._timeout
                 payload = parsed.get("payload", {})
                 chunk = payload.get("chunk")
                 chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
@@ -326,7 +331,7 @@ class AkariUdpClient:
             headers=headers,
             error=error_payload,
             complete=accumulator.complete,
-            timed_out=False,
+            timed_out=timed_out,
             bytes_sent=bytes_sent,
             bytes_received=bytes_received,
         )
@@ -345,3 +350,4 @@ class AkariUdpClient:
             bit = seq % 8
             bitmap[idx] |= 1 << bit
         return bytes(bitmap)
+
