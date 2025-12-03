@@ -12,6 +12,7 @@ sha2 = "0.10"
 thiserror = "1.0"
 tracing = { version = "0.1", optional = true }
 hex = "0.4"
+chacha20poly1305 = "0.10"
 
 [features]
 default = []

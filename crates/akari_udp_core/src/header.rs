@@ -4,6 +4,7 @@ use std::convert::TryInto;
 pub const HEADER_LEN: usize = 24;
 pub const VERSION_V1: u8 = 0x01;
 pub const VERSION_V2: u8 = 0x02;
+pub const FLAG_ENCRYPT: u8 = 0x80; // E bit
 const MAGIC: [u8; 2] = *b"AK";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

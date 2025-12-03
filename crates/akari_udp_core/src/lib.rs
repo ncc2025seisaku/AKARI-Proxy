@@ -4,6 +4,7 @@ mod encode;
 mod error;
 mod header;
 mod hmac;
+mod aead;
 mod payload;
 
 pub use crate::decode::decode_packet;
@@ -13,7 +14,7 @@ pub use crate::encode::{
     encode_response_chunk, encode_response_chunk_v2, encode_response_first_chunk, encode_response_first_chunk_v2,
 };
 pub use crate::error::AkariError;
-pub use crate::header::{Header, MessageType, VERSION_V1, VERSION_V2};
+pub use crate::header::{Header, MessageType, FLAG_ENCRYPT, VERSION_V1, VERSION_V2};
 pub use crate::payload::{
     AckPayload, ErrorPayload, NackPayload, ParsedPacket, Payload, RequestMethod, RequestPayload, ResponseChunk,
 };
@@ -22,7 +23,7 @@ pub use crate::payload::{
 mod tests {
     use crate::{
         decode_packet, encode_ack_v2, encode_nack_v2, encode_request, encode_request_v2, encode_response_first_chunk_v2,
-        AkariError, MessageType, Payload, RequestMethod, RequestPayload,
+        AkariError, MessageType, Payload, RequestMethod, RequestPayload, FLAG_ENCRYPT,
     };
 
     const PSK: &[u8] = b"test-psk-0000-test";
@@ -60,6 +61,24 @@ mod tests {
                 assert_eq!(req.method, RequestMethod::Get);
                 assert_eq!(req.url, url);
                 assert_eq!(req.headers, hdr);
+            }
+            _ => panic!("unexpected payload"),
+        }
+    }
+
+    #[test]
+    fn request_round_trip_v2_encrypted() {
+        let message_id = 0xabcddcba11223344;
+        let timestamp = 0x0f0e0d0c;
+        let url = "https://example.net/secure";
+        let flags = FLAG_ENCRYPT;
+        let datagram =
+            encode_request_v2(RequestMethod::Get, url, &[], message_id, timestamp, flags, PSK).expect("encode");
+        let parsed = decode_packet(&datagram, PSK).expect("decode");
+        match parsed.payload {
+            Payload::Request(req) => {
+                assert_eq!(req.url, url);
+                assert_eq!(req.headers, Vec::<u8>::new());
             }
             _ => panic!("unexpected payload"),
         }

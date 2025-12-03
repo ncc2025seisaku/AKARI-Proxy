@@ -1,6 +1,7 @@
+use crate::aead::decrypt_payload;
 use crate::error::AkariError;
 use crate::hmac::{compute_tag, TAG_LEN};
-use crate::header::{Header, MessageType, HEADER_LEN, VERSION_V1};
+use crate::header::{Header, MessageType, FLAG_ENCRYPT, HEADER_LEN, VERSION_V1};
 use crate::payload::{
     AckPayload, ErrorPayload, NackPayload, Payload, ParsedPacket, RequestMethod, RequestPayload, ResponseChunk,
 };
@@ -47,12 +48,19 @@ pub fn decode_packet(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacket, AkariE
 
     let mut expected_tag = [0u8; TAG_LEN];
     expected_tag.copy_from_slice(&datagram[payload_end..payload_end + TAG_LEN]);
-    let computed_tag = compute_tag(psk, &datagram[..payload_end])?;
-    if computed_tag != expected_tag {
-        return Err(AkariError::HmacMismatch);
-    }
 
-    let parsed_payload = decode_payload(&header, payload)?;
+    let encrypt = header.flags & FLAG_ENCRYPT != 0;
+    let plain_payload = if encrypt {
+        decrypt_payload(psk, &header, payload, &expected_tag)?
+    } else {
+        let computed_tag = compute_tag(psk, &datagram[..payload_end])?;
+        if computed_tag != expected_tag {
+            return Err(AkariError::HmacMismatch);
+        }
+        payload.to_vec()
+    };
+
+    let parsed_payload = decode_payload(&header, &plain_payload)?;
     Ok(ParsedPacket {
         header,
         payload: parsed_payload,

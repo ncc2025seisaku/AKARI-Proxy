@@ -1,6 +1,7 @@
+use crate::aead::encrypt_payload;
 use crate::error::AkariError;
 use crate::hmac::{compute_tag, TAG_LEN};
-use crate::header::{Header, MessageType, VERSION_V1, VERSION_V2, HEADER_LEN};
+use crate::header::{Header, MessageType, FLAG_ENCRYPT, HEADER_LEN, VERSION_V1, VERSION_V2};
 use crate::payload::{RequestMethod, ACK_PAYLOAD_LEN};
 #[cfg(feature = "debug-log")]
 use tracing::debug;
@@ -25,11 +26,18 @@ fn finalize_packet(header: &Header, payload: &[u8], psk: &[u8]) -> Result<Vec<u8
         header.version, header.message_type, header.message_id, header.seq, header.seq_total, header.payload_len
     );
 
+    let encrypt = header.flags & FLAG_ENCRYPT != 0;
     let mut buffer = Vec::with_capacity(HEADER_LEN + payload.len() + TAG_LEN);
     buffer.extend_from_slice(&header.to_bytes());
-    buffer.extend_from_slice(payload);
-    let tag = compute_tag(psk, &buffer)?;
-    buffer.extend_from_slice(&tag);
+    if encrypt {
+        let (ciphertext, tag) = encrypt_payload(psk, header, payload)?;
+        buffer.extend_from_slice(&ciphertext);
+        buffer.extend_from_slice(&tag);
+    } else {
+        buffer.extend_from_slice(payload);
+        let tag = compute_tag(psk, &buffer)?;
+        buffer.extend_from_slice(&tag);
+    }
     Ok(buffer)
 }
 

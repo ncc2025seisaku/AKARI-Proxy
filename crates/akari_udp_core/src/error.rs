@@ -22,6 +22,8 @@ pub enum AkariError {
     Fmt(#[from] std::fmt::Error),
     #[error("HMAC mismatch")]
     HmacMismatch,
+    #[error("AEAD encrypt/decrypt failed")]
+    AeadFailed,
     #[error("invalid PSK")]
     InvalidPsk,
     #[error("unsupported method {0}")]
