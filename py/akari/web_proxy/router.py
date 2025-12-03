@@ -212,6 +212,10 @@ class WebRouter:
 
         if content_type.startswith("text/html") and decompressed:
             body = self._rewrite_html_to_proxy(body, url)
+        elif content_type.startswith("text/css") and decompressed:
+            body = self._rewrite_css_to_proxy(body, url)
+        elif "javascript" in content_type and decompressed:
+            body = self._rewrite_js_to_proxy(body, url)
         headers["Content-Length"] = str(len(body))
         status_code = int(outcome.status_code or 200)
         return RouteResult(status_code=status_code, body=body, headers=headers)
@@ -223,22 +227,11 @@ class WebRouter:
         text = body.decode("utf-8", errors="replace")
         base_url = source_url
 
-        def to_proxy(u: str) -> str:
-            # ignore schemes that should not be proxied
-            if not u or u.startswith(("data:", "javascript:", "mailto:", "#")):
-                return u
-            if u.startswith("//"):
-                u = "https:" + u
-            # resolve relative path against the source page URL
-            if base_url:
-                u = urljoin(base_url, u)
-            return self._proxy_base + u
-
         # Allow whitespace/case variations around href/src attributes
         attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
 
         def attr_repl(m: re.Match) -> str:
-            return f'{m.group("prefix")}{to_proxy(m.group(2))}'
+            return f'{m.group("prefix")}{self._to_proxy_url(m.group(2), base_url)}'
 
         text = attr_pattern.sub(attr_repl, text)
 
@@ -255,7 +248,7 @@ class WebRouter:
                     continue
                 url = tokens[0]
                 rest = " ".join(tokens[1:])
-                url = to_proxy(url)
+                url = self._to_proxy_url(url, base_url)
                 parts.append(" ".join([url, rest]).strip())
             return f'srcset="{", ".join(parts)}"'
 
@@ -271,6 +264,64 @@ class WebRouter:
         text += registration_snippet
 
         return text.encode("utf-8", errors="replace")
+
+    def _rewrite_css_to_proxy(self, body: bytes, source_url: str) -> bytes:
+        """Rewrite CSS url() references to pass through the proxy."""
+        text = body.decode("utf-8", errors="replace")
+        base_url = source_url
+
+        def repl(m: re.Match) -> str:
+            quote = m.group("quote") or ""
+            original = m.group("url")
+            rewritten = self._to_proxy_url(original, base_url)
+            return f"url({quote}{rewritten}{quote})"
+
+        pattern = re.compile(r'url\(\s*(?P<quote>[\'"]?)(?P<url>[^\'")]+)\s*(?P=quote)?\)', re.IGNORECASE)
+        return pattern.sub(repl, text).encode("utf-8", errors="replace")
+
+    def _rewrite_js_to_proxy(self, body: bytes, source_url: str) -> bytes:
+        """Rewrite simple import()/fetch()/static import URLs to go through proxy."""
+        text = body.decode("utf-8", errors="replace")
+        base_url = source_url
+
+        def rewrite_literal(url_literal: str) -> str:
+            return self._to_proxy_url(url_literal, base_url)
+
+        # fetch('...') / fetch("...")
+        fetch_pat = re.compile(r'(fetch\s*\(\s*)([\'"])([^\'"]+)([\'"])', re.IGNORECASE)
+        text = fetch_pat.sub(lambda m: f"{m.group(1)}{m.group(2)}{rewrite_literal(m.group(3))}{m.group(4)}", text)
+
+        # import('...') dynamic
+        dyn_import_pat = re.compile(r'(import\s*\(\s*)([\'"])([^\'"]+)([\'"])(\s*\))', re.IGNORECASE)
+        text = dyn_import_pat.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}{rewrite_literal(m.group(3))}{m.group(4)}{m.group(5)}", text
+        )
+
+        # static import ... from '...';
+        static_import_pat = re.compile(r'(from\s+)([\'"])([^\'"]+)([\'"])', re.IGNORECASE)
+        text = static_import_pat.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}{rewrite_literal(m.group(3))}{m.group(4)}", text
+        )
+
+        # bare import '...';
+        bare_import_pat = re.compile(r'(^|\s)(import\s+)([\'"])([^\'"]+)([\'"])', re.IGNORECASE)
+        text = bare_import_pat.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{rewrite_literal(m.group(4))}{m.group(5)}", text
+        )
+
+        return text.encode("utf-8", errors="replace")
+
+    def _to_proxy_url(self, url: str, base_url: str) -> str:
+        """Convert absolute/relative URL into proxied URL, preserving data/js/mailto."""
+        if not url or url.startswith(("data:", "javascript:", "mailto:", "#")):
+            return url
+        if url.startswith(self._proxy_base):
+            return url
+        if url.startswith("//"):
+            url = "https:" + url
+        if not url.startswith(("http://", "https://")) and base_url:
+            url = urljoin(base_url, url)
+        return self._proxy_base + url
 
     # ---------------------------------------------------------------------------
     # Strip security headers (CSP etc.)

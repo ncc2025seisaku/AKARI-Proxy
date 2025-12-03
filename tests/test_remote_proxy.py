@@ -52,7 +52,9 @@ class RemoteProxyHandlerTest(unittest.TestCase):
         return _to_native(parsed)
 
     def tearDown(self) -> None:
-        RESP_CACHE.clear()
+        from akari.remote_proxy.handler import clear_caches
+
+        clear_caches()
 
     def test_handle_request_splits_body_into_multiple_chunks(self) -> None:
         body = b"A" * (FIRST_CHUNK_CAPACITY + MTU_PAYLOAD_SIZE + 10)
@@ -150,7 +152,9 @@ class RemoteProxyServerTest(unittest.TestCase):
     URL = "https://example.com/ok"
 
     def tearDown(self) -> None:
-        RESP_CACHE.clear()
+        from akari.remote_proxy.handler import clear_caches
+
+        clear_caches()
 
     def _run_server(self) -> tuple[AkariUdpServer, threading.Thread]:
         server = AkariUdpServer("127.0.0.1", 0, self.PSK, handle_request, timeout=2.0)
