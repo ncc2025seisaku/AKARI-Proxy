@@ -152,6 +152,7 @@ class AkariUdpClient:
         buffer_size: int = 65535,
         protocol_version: int = 2,
         max_nack_rounds: int = 3,
+        max_ack_rounds: int = 1,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -159,6 +160,7 @@ class AkariUdpClient:
         self._timeout = timeout
         self._buffer_size = buffer_size
         self._max_nack_rounds = max(0, int(max_nack_rounds))
+        self._max_ack_rounds = max(0, int(max_ack_rounds))
         self._version = protocol_version
 
     def send_request(
@@ -182,6 +184,7 @@ class AkariUdpClient:
         error_payload: Mapping[str, Any] | None = None
         bytes_sent = len(datagram)
         bytes_received = 0
+        acks_sent = 0
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(None)
@@ -214,6 +217,16 @@ class AkariUdpClient:
                 packet_type = parsed["type"]
                 if packet_type == "resp":
                     accumulator.add_chunk(parsed)
+                    if (
+                        self._version >= 2
+                        and acks_sent < self._max_ack_rounds
+                        and accumulator.seq_total is not None
+                    ):
+                        missing = self._first_missing_seq(accumulator)
+                        if missing is not None:
+                            ack = encode_ack_v2_py(missing, message_id, timestamp, self._psk)
+                            sock.sendto(ack, self._remote_addr)
+                            acks_sent += 1
                     if accumulator.complete:
                         break
                     if (
@@ -259,3 +272,12 @@ class AkariUdpClient:
             bit = seq % 8
             bitmap[idx] |= 1 << bit
         return bytes(bitmap)
+
+    def _first_missing_seq(self, acc: ResponseAccumulator) -> int | None:
+        """Return the smallest missing sequence number if any."""
+        if acc.seq_total is None:
+            return None
+        for seq in range(acc.seq_total):
+            if seq not in acc.chunks:
+                return seq
+        return None
