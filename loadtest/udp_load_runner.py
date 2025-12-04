@@ -95,6 +95,7 @@ class LoadTestClient(AkariUdpClient):
             sock.sendto(datagram, self._remote_addr)
             last_received = time.monotonic()
             nack_sent = 0
+            last_nack_sent_at: float | None = None
             retries = 0
             heartbeat_interval = self._heartbeat_interval
             next_probe = (
@@ -161,9 +162,11 @@ class LoadTestClient(AkariUdpClient):
                     ):
                         missing_bitmap = self._build_missing_bitmap(accumulator)
                         if missing_bitmap:
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            nack_sent += 1
+                            if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= 0.05:
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nack_sent += 1
+                                last_nack_sent_at = time.monotonic()
                 elif packet_type == "error":
                     error_payload = parsed["payload"]
                     break

@@ -254,6 +254,7 @@ class AkariUdpClient:
                 last_received + heartbeat_interval if heartbeat_interval > 0 and self._max_retries > 0 else None
             )
             retry_delay = self._initial_retry_delay if self._initial_retry_delay > 0 else heartbeat_interval
+            last_nack_sent_at: float | None = None
             while True:
                 now = time.monotonic()
                 if expires_at is not None and now >= expires_at:
@@ -312,9 +313,12 @@ class AkariUdpClient:
                     ):
                         missing_bitmap = self._build_missing_bitmap(accumulator)
                         if missing_bitmap:
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            nacks_sent += 1
+                            # Avoid NACK連打でのループ: 一定間隔を空けて送る
+                            if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= 0.05:
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nacks_sent += 1
+                                last_nack_sent_at = time.monotonic()
                 elif packet_type == "error":
                     error_payload = parsed["payload"]
                     break
