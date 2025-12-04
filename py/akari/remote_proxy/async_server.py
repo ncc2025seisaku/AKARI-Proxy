@@ -18,7 +18,7 @@ from akari_udp_py import decode_packet_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
-from .handler import handle_request
+from .handler import handle_request, set_require_encryption
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "conf" / "remote.toml"
@@ -131,11 +131,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     log_level = args.log_level or config.log_level
     logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO), format="%(levelname)s %(name)s: %(message)s")
 
+    set_require_encryption(config.require_encryption)
     asyncio.run(
         serve_remote_proxy_async(
             config.host,
             config.port,
             psk=config.psk,
+            # enforce encryption based on config
             workers=args.workers,
             logger=logging.getLogger("akari.remote_proxy.async_server"),
         )

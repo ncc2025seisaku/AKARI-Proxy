@@ -33,6 +33,12 @@ FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
 FLAG_HAS_HEADER = 0x40
 FLAG_ENCRYPT = 0x80
+REQUIRE_ENCRYPTION = False
+
+
+def set_require_encryption(flag: bool) -> None:
+    global REQUIRE_ENCRYPTION
+    REQUIRE_ENCRYPTION = bool(flag)
 
 ERROR_INVALID_URL = 10
 ERROR_RESPONSE_TOO_LARGE = 11
@@ -354,6 +360,18 @@ def clear_caches() -> None:
 
 def handle_request(request: IncomingRequest) -> Sequence[bytes]:
     """AkariUdpServer から呼ばれるハンドラ本体."""
+
+    if (
+        REQUIRE_ENCRYPTION
+        and request.packet_type == "req"
+        and (int(request.header.get("flags", 0)) & FLAG_ENCRYPT) == 0
+    ):
+        return _encode_error(
+            request,
+            error_code=ERROR_UNSUPPORTED_PACKET,
+            http_status=400,
+            message="encryption required (set E flag)",
+        )
 
     if request.packet_type == "nack":
         return _handle_nack(request)

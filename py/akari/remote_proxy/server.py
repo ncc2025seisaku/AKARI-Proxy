@@ -7,7 +7,7 @@ import logging
 from typing import Iterable, Sequence
 
 from ..udp_server import AkariUdpServer
-from .handler import handle_request
+from .handler import handle_request, set_require_encryption
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,11 +25,13 @@ def serve_remote_proxy(
     psk: bytes,
     timeout: float | None = None,
     buffer_size: int = 65535,
+    require_encryption: bool = False,
     logger: logging.Logger | None = None,
 ) -> None:
     """AkariUdpServer を立ち上げて handle_request を呼び出す."""
 
     logger = logger or LOGGER
+    set_require_encryption(require_encryption)
     with AkariUdpServer(host, port, psk, handle_request, timeout=timeout, buffer_size=buffer_size) as server:
         logger.info("AKARI remote proxy listening on %s:%s", *server.address)
         while True:
@@ -61,6 +63,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--hex", action="store_true", help="interpret --psk as hex string")
     parser.add_argument("--timeout", type=float, help="socket timeout for recvfrom")
     parser.add_argument("--buffer-size", type=int, default=65535, help="UDP receive buffer size")
+    parser.add_argument("--require-encryption", action="store_true", help="reject requests without E flag")
     parser.add_argument("--log-level", default="INFO", help="logging level (INFO/DEBUG/...)")
     args = parser.parse_args(argv)
 
@@ -72,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         psk=psk,
         timeout=args.timeout,
         buffer_size=args.buffer_size,
+        require_encryption=args.require_encryption,
         logger=logging.getLogger("akari.remote_proxy.server"),
     )
 

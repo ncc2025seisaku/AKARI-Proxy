@@ -18,6 +18,7 @@ class RemoteProxyConfig:
     buffer_size: int
     log_level: str
     psk: bytes
+    require_encryption: bool
 
 
 class ConfigError(ValueError):
@@ -34,6 +35,7 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
     buffer_size = _require_int(server_data, "buffer_size", default=65535)
     log_level = _require_str(server_data, "log_level", default="INFO").upper()
     psk = _resolve_psk(server_data, base_dir=Path(path).resolve().parent)
+    require_encryption = _require_bool(server_data, "require_encryption", default=False)
 
     return RemoteProxyConfig(
         host=host,
@@ -42,6 +44,7 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
         buffer_size=buffer_size,
         log_level=log_level,
         psk=psk,
+        require_encryption=require_encryption,
     )
 
 
@@ -90,6 +93,15 @@ def _require_int(data: dict[str, Any], key: str, *, default: int | None = None) 
     if value <= 0:
         raise ConfigError(f"{key} must be a positive integer")
     return value
+
+
+def _require_bool(data: dict[str, Any], key: str, *, default: bool = False) -> bool:
+    if key not in data:
+        return default
+    value = data[key]
+    if isinstance(value, bool):
+        return value
+    raise ConfigError(f"{key} must be a boolean")
 
 
 def _optional_float(data: dict[str, Any], key: str) -> float | None:

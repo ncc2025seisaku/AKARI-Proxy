@@ -124,3 +124,5 @@ ID==0: 0 [name_len(1)][name][val_len(varint16)][value]
 - C フラグの実用条件（非Brotli時のみ）を自動判定。  
 - CSS 内 url() / JS 動的生成までの書き換え強化。  
 - テスト: MTU境界、ロス10–20%、Brotli + filter ON/OFF、v1/v2混在。
+
+- `conf/remote.toml` の `require_encryption = true` で E フラグ無しリクエストを拒否できる。UI トグルから E を送信可能。

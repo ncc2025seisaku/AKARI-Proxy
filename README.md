@@ -104,6 +104,7 @@ uv run --python 3.11 python scripts/demo_udp.py --url https://example.com/ping -
 
 本番環境では `conf/remote.toml` から設定を読み、`scripts/run_remote_proxy.py` で起動します。
 `server.psk` / `server.psk_file` / `server.psk_env` のいずれかで PSK を指定し、`psk_hex = true` を使うと 16 進文字列からバイト列を復号できます。
+`require_encryption = true` を設定すると暗号化フラグ E の無いリクエストを 400 で拒否します。
 
 ```powershell
 set PYTHONPATH=%CD%\py
