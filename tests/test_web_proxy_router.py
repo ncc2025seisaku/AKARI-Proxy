@@ -50,6 +50,12 @@ class WebRouterEncryptionTest(unittest.TestCase):
             enc_client.send_request.assert_called_once()
             plain_client.send_request.assert_not_called()
 
+    def test_coerce_bool_accepts_query_list_values(self):
+        cfg = self._config()
+        router = WebRouter(cfg)
+        self.assertTrue(router._coerce_bool({"enc": ["1"]}, "enc"))
+        self.assertFalse(router._coerce_bool({"enc": ["0"]}, "enc"))
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite([loader.loadTestsFromTestCase(WebRouterEncryptionTest)])

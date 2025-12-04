@@ -436,6 +436,10 @@ class WebRouter:
         if key not in payload:
             return None
         value = payload.get(key)
+        if isinstance(value, list):
+            if not value:
+                return None
+            value = value[0]
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)) and value in (0, 1):
