@@ -280,6 +280,7 @@ class AsyncDemoServer:
         self._transport: asyncio.DatagramTransport | None = None
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._address: tuple[str, int] | None = None
+        self._ready = threading.Event()
 
     @property
     def address(self) -> tuple[str, int]:
@@ -289,6 +290,8 @@ class AsyncDemoServer:
 
     def start(self) -> None:
         self._thread.start()
+        if not self._ready.wait(timeout=2.0):
+            raise RuntimeError("async demo server failed to start in time")
 
     def stop(self) -> None:
         if self._transport:
@@ -308,6 +311,7 @@ class AsyncDemoServer:
                 sockname = transport.get_extra_info("sockname")
                 if isinstance(sockname, tuple):
                     self.outer._address = (sockname[0], sockname[1])
+                    self.outer._ready.set()
 
             def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
                 try:
@@ -336,6 +340,7 @@ class AsyncDemoServer:
             sockname = transport.get_extra_info("sockname")
             if isinstance(sockname, tuple):
                 self._address = (sockname[0], sockname[1])
+                self._ready.set()
         try:
             self._loop.run_forever()
         finally:

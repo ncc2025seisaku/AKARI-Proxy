@@ -1,9 +1,9 @@
 {
-  "started_at": 1764747347.4410188,
-  "finished_at": 1764747417.1059284,
+  "started_at": 1764848905.0199149,
+  "finished_at": 1764848922.5513978,
   "records": [
     {
-      "timestamp": 1764747350.5491078,
+      "timestamp": 1764848905.07392,
       "iteration": 1,
       "scenario": "baseline_demo",
       "description": "Sanity check on local demo server (no loss/jitter).",
@@ -38,15 +38,15 @@
         "exceptions": 0,
         "bytes_sent": 5200,
         "bytes_received": 6000,
-        "latency_avg_sec": 0.0086,
-        "latency_p95_sec": 0.0101,
-        "latency_p99_sec": 0.0107,
-        "elapsed_sec": 0.088,
-        "rps": 905.36
+        "latency_avg_sec": 0.0045,
+        "latency_p95_sec": 0.0068,
+        "latency_p99_sec": 0.0072,
+        "elapsed_sec": 0.045,
+        "rps": 1790.25
       }
     },
     {
-      "timestamp": 1764747359.2700336,
+      "timestamp": 1764848908.1083894,
       "iteration": 1,
       "scenario": "delay_loss_extreme",
       "description": "3s delay + 20% loss + jitter 300ms: checklistの遅延/ロス要件を再現。",
@@ -81,15 +81,15 @@
         "exceptions": 0,
         "bytes_sent": 13000,
         "bytes_received": 12300,
-        "latency_avg_sec": 0.1651,
-        "latency_p95_sec": 0.2898,
-        "latency_p99_sec": 0.2964,
-        "elapsed_sec": 2.968,
-        "rps": 67.38
+        "latency_avg_sec": 0.1494,
+        "latency_p95_sec": 0.2855,
+        "latency_p99_sec": 0.3006,
+        "elapsed_sec": 3.024,
+        "rps": 66.14
       }
     },
     {
-      "timestamp": 1764747366.345954,
+      "timestamp": 1764848910.520776,
       "iteration": 1,
       "scenario": "jitter_spike",
       "description": "ジッター大 (350ms) で順序逆転・再送暴走をチェック。",
@@ -124,15 +124,15 @@
         "exceptions": 0,
         "bytes_sent": 13000,
         "bytes_received": 15000,
-        "latency_avg_sec": 0.1743,
-        "latency_p95_sec": 0.3316,
-        "latency_p99_sec": 0.3504,
-        "elapsed_sec": 2.299,
-        "rps": 87.01
+        "latency_avg_sec": 0.1821,
+        "latency_p95_sec": 0.3376,
+        "latency_p99_sec": 0.3508,
+        "elapsed_sec": 2.392,
+        "rps": 83.61
       }
     },
     {
-      "timestamp": 1764747372.5154006,
+      "timestamp": 1764848912.63027,
       "iteration": 1,
       "scenario": "loss_heavy",
       "description": "ロス25% で再送/バックオフの安定性を確認。",
@@ -161,21 +161,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 162,
-        "timeout": 58,
+        "success": 156,
+        "timeout": 64,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 14300,
-        "bytes_received": 12150,
-        "latency_avg_sec": 0.0077,
-        "latency_p95_sec": 0.0168,
-        "latency_p99_sec": 0.0186,
-        "elapsed_sec": 1.639,
-        "rps": 134.22
+        "bytes_received": 11700,
+        "latency_avg_sec": 0.0072,
+        "latency_p95_sec": 0.0144,
+        "latency_p99_sec": 0.0174,
+        "elapsed_sec": 2.083,
+        "rps": 105.62
       }
     },
     {
-      "timestamp": 1764747377.26246,
+      "timestamp": 1764848913.440906,
       "iteration": 1,
       "scenario": "burst_traffic",
       "description": "高並列・高PPSバースト（マルチストリームとburst耐性）。",
@@ -204,21 +204,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 765,
-        "timeout": 35,
+        "success": 754,
+        "timeout": 46,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 52000,
-        "bytes_received": 57375,
-        "latency_avg_sec": 0.0286,
-        "latency_p95_sec": 0.0521,
-        "latency_p99_sec": 0.0623,
-        "elapsed_sec": 1.188,
-        "rps": 673.43
+        "bytes_received": 56550,
+        "latency_avg_sec": 0.0092,
+        "latency_p95_sec": 0.0166,
+        "latency_p99_sec": 0.0174,
+        "elapsed_sec": 0.754,
+        "rps": 1060.35
       }
     },
     {
-      "timestamp": 1764747382.4219303,
+      "timestamp": 1764848914.1722167,
       "iteration": 1,
       "scenario": "multistream_sustained",
       "description": "中負荷で長めの持続（再送バッファ枯渇/リークを観察）。",
@@ -253,15 +253,15 @@
         "exceptions": 0,
         "bytes_sent": 26000,
         "bytes_received": 30000,
-        "latency_avg_sec": 0.0426,
-        "latency_p95_sec": 0.0783,
-        "latency_p99_sec": 0.082,
-        "elapsed_sec": 0.696,
-        "rps": 574.61
+        "latency_avg_sec": 0.0422,
+        "latency_p95_sec": 0.078,
+        "latency_p99_sec": 0.0813,
+        "elapsed_sec": 0.701,
+        "rps": 570.91
       }
     },
     {
-      "timestamp": 1764747388.6422927,
+      "timestamp": 1764848916.3121908,
       "iteration": 1,
       "scenario": "flap_drop",
       "description": "断続的ドロップ（20%）＋小さな待ちを挟み、断続断後の復帰を確認。",
@@ -290,21 +290,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 126,
-        "timeout": 24,
+        "success": 114,
+        "timeout": 36,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 9750,
-        "bytes_received": 9450,
-        "latency_avg_sec": 0.0021,
-        "latency_p95_sec": 0.0035,
-        "latency_p99_sec": 0.0066,
-        "elapsed_sec": 1.454,
-        "rps": 103.19
+        "bytes_received": 8550,
+        "latency_avg_sec": 0.0036,
+        "latency_p95_sec": 0.0058,
+        "latency_p99_sec": 0.0069,
+        "elapsed_sec": 2.117,
+        "rps": 70.86
       }
     },
     {
-      "timestamp": 1764747395.8395367,
+      "timestamp": 1764848917.4208567,
       "iteration": 1,
       "scenario": "flap_harsh",
       "description": "強いフラップ（約1.3秒周期で0.25秒ブラックアウト）＋軽ロス。復元性を重点確認。",
@@ -333,21 +333,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 182,
-        "timeout": 18,
+        "success": 175,
+        "timeout": 25,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 13650,
-        "latency_avg_sec": 0.013,
-        "latency_p95_sec": 0.019,
-        "latency_p99_sec": 0.0213,
-        "elapsed_sec": 1.145,
-        "rps": 174.68
+        "bytes_received": 13125,
+        "latency_avg_sec": 0.0047,
+        "latency_p95_sec": 0.0105,
+        "latency_p99_sec": 0.0108,
+        "elapsed_sec": 1.087,
+        "rps": 184.08
       }
     },
     {
-      "timestamp": 1764747402.5446267,
+      "timestamp": 1764848918.5345507,
       "iteration": 1,
       "scenario": "flap_recovery_tuned",
       "description": "フラップ緩和版（約1.3秒周期で0.12秒断＋再送/ハートビート強化）で回復率を確認。",
@@ -376,21 +376,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 173,
-        "timeout": 27,
+        "success": 176,
+        "timeout": 24,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 12975,
-        "latency_avg_sec": 0.0095,
-        "latency_p95_sec": 0.0141,
-        "latency_p99_sec": 0.0166,
-        "elapsed_sec": 1.176,
-        "rps": 170.07
+        "bytes_received": 13200,
+        "latency_avg_sec": 0.0059,
+        "latency_p95_sec": 0.0153,
+        "latency_p99_sec": 0.0177,
+        "elapsed_sec": 1.106,
+        "rps": 180.88
       }
     },
     {
-      "timestamp": 1764747407.930478,
+      "timestamp": 1764848919.4728577,
       "iteration": 1,
       "scenario": "mtu_variation_like",
       "description": "MTU変動の近似（フラグメント相当の小さいチャンクを強制受信）。",
@@ -419,21 +419,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 231,
-        "timeout": 9,
+        "success": 221,
+        "timeout": 19,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 15600,
-        "bytes_received": 17325,
-        "latency_avg_sec": 0.0304,
-        "latency_p95_sec": 0.0516,
-        "latency_p99_sec": 0.054,
-        "elapsed_sec": 0.857,
-        "rps": 280.21
+        "bytes_received": 16575,
+        "latency_avg_sec": 0.0282,
+        "latency_p95_sec": 0.0501,
+        "latency_p99_sec": 0.0514,
+        "elapsed_sec": 0.9,
+        "rps": 266.6
       }
     },
     {
-      "timestamp": 1764747409.409267,
+      "timestamp": 1764848920.8000908,
       "iteration": 1,
       "scenario": "gz_large_body",
       "description": "10MBクラスの巨大レスポンスをdemo-serverで返し、デコード/転送負荷を見る。",
@@ -462,21 +462,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 3,
-        "timeout": 7,
+        "success": 7,
+        "timeout": 3,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 650,
-        "bytes_received": 273,
-        "latency_avg_sec": 0.3161,
-        "latency_p95_sec": 0.3123,
-        "latency_p99_sec": 0.3123,
-        "elapsed_sec": 1.359,
-        "rps": 7.36
+        "bytes_received": 637,
+        "latency_avg_sec": 0.4019,
+        "latency_p95_sec": 0.5006,
+        "latency_p99_sec": 0.5006,
+        "elapsed_sec": 1.308,
+        "rps": 7.65
       }
     },
     {
-      "timestamp": 1764747417.1049328,
+      "timestamp": 1764848922.5485008,
       "iteration": 1,
       "scenario": "sw_fetch_3000_like",
       "description": "3000本相当の大量フェッチを模擬（軽いロス付き）。",
@@ -505,17 +505,17 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 2938,
-        "timeout": 62,
+        "success": 2950,
+        "timeout": 50,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 195000,
-        "bytes_received": 220350,
-        "latency_avg_sec": 0.0955,
-        "latency_p95_sec": 0.1251,
-        "latency_p99_sec": 0.1356,
-        "elapsed_sec": 3.079,
-        "rps": 974.24
+        "bytes_received": 221250,
+        "latency_avg_sec": 0.039,
+        "latency_p95_sec": 0.0514,
+        "latency_p99_sec": 0.0558,
+        "elapsed_sec": 1.634,
+        "rps": 1836.48
       }
     }
   ]
