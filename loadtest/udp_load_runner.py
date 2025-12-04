@@ -497,7 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
     parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
-    parser.add_argument("--async-demo-server", action="store_true", help="Use asyncio-based demo UDP server (concurrent handling)")
+    parser.add_argument("--async-demo-server", action="store_true", default=True, help="Use asyncio-based demo UDP server (concurrent handling)")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
 
