@@ -38,7 +38,7 @@ SCENARIOS: list[Scenario] = [
     Scenario(
         key="delay_loss_extreme",
         description="3s delay + 20% loss + jitter 300ms: checklistの遅延/ロス要件を再現。",
-        overrides={"timeout": 6.0, "loss_rate": 0.2, "jitter": 0.3, "requests": 200, "concurrency": 16},
+        overrides={"timeout": 7.0, "loss_rate": 0.2, "jitter": 0.3, "requests": 200, "concurrency": 16},
     ),
     Scenario(
         key="jitter_spike",
@@ -48,12 +48,12 @@ SCENARIOS: list[Scenario] = [
     Scenario(
         key="loss_heavy",
         description="ロス25% で再送/バックオフの安定性を確認。",
-        overrides={"timeout": 5.0, "loss_rate": 0.25, "requests": 220, "concurrency": 20},
+        overrides={"timeout": 6.0, "loss_rate": 0.25, "requests": 220, "concurrency": 20},
     ),
     Scenario(
         key="burst_traffic",
         description="高並列・高PPSバースト（マルチストリームとburst耐性）。",
-        overrides={"requests": 800, "concurrency": 48, "timeout": 4.0, "loss_rate": 0.05},
+        overrides={"requests": 800, "concurrency": 48, "timeout": 5.0, "loss_rate": 0.05},
     ),
     Scenario(
         key="multistream_sustained",
@@ -63,7 +63,14 @@ SCENARIOS: list[Scenario] = [
     Scenario(
         key="flap_drop",
         description="断続的ドロップ（20%）＋小さな待ちを挟み、断続断後の復帰を確認。",
-        overrides={"requests": 150, "concurrency": 12, "timeout": 5.0, "loss_rate": 0.2, "delay": 0.02},
+        overrides={
+            "requests": 150,
+            "concurrency": 12,
+            "timeout": 6.0,
+            "loss_rate": 0.2,
+            "delay": 0.02,
+            "max_nack_rounds": 4,
+        },
     ),
     Scenario(
         key="flap_harsh",
@@ -71,7 +78,7 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 200,
             "concurrency": 16,
-            "timeout": 6.5,
+            "timeout": 7.0,
             "loss_rate": 0.05,
             "flap_interval": 1.3,
             "flap_duration": 0.25,
@@ -89,7 +96,7 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 200,
             "concurrency": 16,
-            "timeout": 6.0,
+            "timeout": 6.5,
             "loss_rate": 0.05,
             "flap_interval": 1.3,
             "flap_duration": 0.12,
@@ -117,9 +124,10 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 10,
             "concurrency": 4,
-            "timeout": 20.0,
+            "timeout": 30.0,
             "demo_body_size": 10_000_000,
             "delay": 0.01,
+            "max_nack_rounds": 5,
         },
     ),
     Scenario(

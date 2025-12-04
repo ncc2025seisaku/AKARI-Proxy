@@ -26,6 +26,8 @@ MTU_PAYLOAD_SIZE = 1180
 # status(2) + hdr_len/reserved(2) + body_len(4)
 FIRST_CHUNK_METADATA_LEN = 8
 FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
+HEAD_DUP_COUNT = max(1, int(os.environ.get("AKARI_HEAD_DUP_COUNT", "1")))
+LARGE_BODY_THRESHOLD = int(os.environ.get("AKARI_LARGE_BODY_THRESHOLD", "512000"))
 
 STATIC_HEADER_IDS: dict[str, int] = {
     "content-type": 1,
@@ -181,6 +183,10 @@ def encode_success_response(
     else:
         body_for_wire = body
 
+    head_dup = HEAD_DUP_COUNT
+    if original_len >= LARGE_BODY_THRESHOLD:
+        head_dup = max(head_dup, 2)
+
     first_chunk = body_for_wire[:FIRST_CHUNK_CAPACITY] if FIRST_CHUNK_CAPACITY > 0 else b""
     tail = body_for_wire[FIRST_CHUNK_CAPACITY:]
     tail_chunks = [tail[i : i + MTU_PAYLOAD_SIZE] for i in range(0, len(tail), MTU_PAYLOAD_SIZE)]
@@ -213,7 +219,7 @@ def encode_success_response(
             request.psk,
         )
 
-    datagrams = [first]
+    datagrams = [first] * head_dup
     for idx, chunk in enumerate(tail_chunks, start=1):
         if is_v2:
             datagrams.append(encode_response_chunk_v2_py(chunk, message_id, idx, seq_total, 0, timestamp, request.psk))

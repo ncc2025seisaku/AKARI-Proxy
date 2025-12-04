@@ -1,4 +1,4 @@
-"""AKARI-UDP で届いたリクエストを HTTP 取得に結び付けるハンドラ."""
+﻿"""AKARI-UDP で届いたリクエストを HTTP 取得に結び付けるハンドラ."""
 
 from __future__ import annotations
 
@@ -47,17 +47,18 @@ ERROR_UNEXPECTED = 255
 ERROR_UNSUPPORTED_PACKET = 254
 
 # 簡易キャッシュ: message_id -> (timestamp, [datagrams])
+# 簡易キャッシュ: message_id -> (timestamp, [datagrams])
 RESP_CACHE_TTL = 5.0
 RESP_CACHE: dict[int, tuple[float, list[bytes]]] = {}
 RESP_CACHE_LOCK = threading.RLock()
-# フラップ耐性向上のための冗長送信回数（全チャンク）。環境変数 AKARI_RESP_DUP_COUNT で上書き
+# 冗長送信回数（全チャンク）。環境変数 AKARI_RESP_DUP_COUNT で上書き
 RESP_DUP_COUNT = max(1, int(os.environ.get("AKARI_RESP_DUP_COUNT", "1")))
-# 先頭チャンクだけ追加送信する回数（ヘッド冗長）。環境変数 AKARI_HEAD_DUP_COUNT で上書き
+# 先頭チャンクの追加送信回数（ヘッド冗長）。環境変数 AKARI_HEAD_DUP_COUNT で上書き
 RESP_HEAD_DUP_COUNT = max(1, int(os.environ.get("AKARI_HEAD_DUP_COUNT", "1")))
 # 軽量FEC (XORパリティ) を有効にするフラグ。環境変数 AKARI_FEC_PARITY=1 で有効
 FEC_PARITY_ENABLED = os.environ.get("AKARI_FEC_PARITY", "0") == "1"
-
-# HTTP レスポンスキャッシュ: url -> (expires_at, response)
+# 大きなボディのしきい値（B）
+LARGE_BODY_THRESHOLD = int(os.environ.get("AKARI_LARGE_BODY_THRESHOLD", "512000"))
 HTTP_CACHE_DEFAULT_TTL = 60.0
 HTTP_CACHE_MAX_ENTRIES = 256
 HTTP_CACHE: dict[str, tuple[float, HttpResponse]] = {}
@@ -281,10 +282,15 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     )
     timestamp = _now_timestamp()
     first_chunk, tail_chunks = _split_body(body_for_wire)
-    seq_total = max(1, 1 + len(tail_chunks))
+    parity_enabled = FEC_PARITY_ENABLED or body_len >= LARGE_BODY_THRESHOLD
+    seq_total = max(1, 1 + len(tail_chunks) + (1 if parity_enabled else 0))
     message_id = request.header["message_id"]
     header_block = encode_header_block(headers_for_wire) if compress_transport else b""
     flags = FLAG_HAS_HEADER if header_block else 0
+
+    head_dup = RESP_HEAD_DUP_COUNT
+    if body_len >= LARGE_BODY_THRESHOLD:
+        head_dup = max(head_dup, 2)  # 大きなボディは先頭チャンクを重ねて送る
 
     if version >= 2:
         first = encode_response_first_chunk_v2_py(
@@ -298,7 +304,7 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
             timestamp,
             request.psk,
         )
-        datagrams: list[bytes] = [first] * RESP_HEAD_DUP_COUNT
+        datagrams: list[bytes] = [first] * head_dup
     else:
         first = encode_response_first_chunk_py(
             response["status_code"],
@@ -309,12 +315,11 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
             timestamp,
             request.psk,
         )
-        datagrams = [first] * RESP_HEAD_DUP_COUNT
+        datagrams = [first] * head_dup
 
     parity_chunk: bytes | None = None
-    if FEC_PARITY_ENABLED:
+    if parity_enabled:
         parity_chunk = _build_parity_chunk([first_chunk] + tail_chunks)
-        seq_total += 1
 
     for index, chunk in enumerate(tail_chunks, start=1):
         if version >= 2:
@@ -578,3 +583,4 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
     )
     _maybe_store_http_cache(normalized_url, response, now=time.time())
     return _encode_success_datagrams(request, response)
+
