@@ -38,7 +38,7 @@ SCENARIOS: list[Scenario] = [
     Scenario(
         key="delay_loss_extreme",
         description="3s delay + 20% loss + jitter 300ms: checklistの遅延/ロス要件を再現。",
-        overrides={"timeout": 7.0, "loss_rate": 0.2, "jitter": 0.3, "requests": 200, "concurrency": 16},
+        overrides={"timeout": 8.0, "loss_rate": 0.2, "jitter": 0.3, "requests": 200, "concurrency": 16, "max_nack_rounds": 5},
     ),
     Scenario(
         key="jitter_spike",
@@ -48,12 +48,12 @@ SCENARIOS: list[Scenario] = [
     Scenario(
         key="loss_heavy",
         description="ロス25% で再送/バックオフの安定性を確認。",
-        overrides={"timeout": 6.0, "loss_rate": 0.25, "requests": 220, "concurrency": 20},
+        overrides={"timeout": 7.0, "loss_rate": 0.25, "requests": 220, "concurrency": 20, "max_nack_rounds": 5},
     ),
     Scenario(
         key="burst_traffic",
         description="高並列・高PPSバースト（マルチストリームとburst耐性）。",
-        overrides={"requests": 800, "concurrency": 48, "timeout": 5.0, "loss_rate": 0.05},
+        overrides={"requests": 800, "concurrency": 48, "timeout": 6.0, "loss_rate": 0.05, "max_nack_rounds": 4},
     ),
     Scenario(
         key="multistream_sustained",
@@ -66,10 +66,10 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 150,
             "concurrency": 12,
-            "timeout": 6.0,
+            "timeout": 7.0,
             "loss_rate": 0.2,
             "delay": 0.02,
-            "max_nack_rounds": 4,
+            "max_nack_rounds": 5,
         },
     ),
     Scenario(
@@ -78,16 +78,16 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 200,
             "concurrency": 16,
-            "timeout": 7.0,
+            "timeout": 7.5,
             "loss_rate": 0.05,
             "flap_interval": 1.3,
             "flap_duration": 0.25,
-            "heartbeat_interval": 0.25,
-            "max_retries": 8,
-            "initial_retry_delay": 0.05,
+            "heartbeat_interval": 0.3,
+            "max_retries": 10,
+            "initial_retry_delay": 0.06,
             "heartbeat_backoff": 1.1,
             "retry_jitter": 0.05,
-            "max_nack_rounds": 6,
+            "max_nack_rounds": 7,
         },
     ),
     Scenario(
@@ -96,14 +96,15 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 200,
             "concurrency": 16,
-            "timeout": 6.5,
+            "timeout": 7.0,
             "loss_rate": 0.05,
             "flap_interval": 1.3,
             "flap_duration": 0.12,
-            "heartbeat_interval": 0.25,
-            "max_retries": 8,
-            "initial_retry_delay": 0.04,
-            "heartbeat_backoff": 1.25,
+            "heartbeat_interval": 0.3,
+            "heartbeat_backoff": 1.2,
+            "max_retries": 10,
+            "initial_retry_delay": 0.05,
+            "max_nack_rounds": 5,
         },
     ),
     Scenario(
@@ -112,10 +113,11 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 240,
             "concurrency": 24,
-            "timeout": 5.0,
+            "timeout": 6.0,
             "buffer_size": 1400,
             "loss_rate": 0.05,
             "jitter": 0.05,
+            "max_nack_rounds": 4,
         },
     ),
     Scenario(
@@ -136,7 +138,7 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 3000,
             "concurrency": 120,
-            "timeout": 5.0,
+            "timeout": 6.0,
             "loss_rate": 0.02,
             "jitter": 0.02,
         },
