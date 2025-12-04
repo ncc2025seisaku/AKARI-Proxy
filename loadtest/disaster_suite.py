@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Disaster-mode scenario runner for AKARI-UDPv2.
 
 This script bundles multiple harsh-network scenarios derived from the
@@ -32,37 +32,37 @@ class Scenario:
 SCENARIOS: list[Scenario] = [
     Scenario(
         key="baseline_demo",
-        description="Sanity check on local demo server (no loss/jitter).",
+        description="Baseline sanity: local demo server, no loss/jitter.",
         overrides={"demo_server": True, "requests": 80, "concurrency": 8, "timeout": 3.0},
     ),
     Scenario(
         key="delay_loss_extreme",
-        description="3s delay + 20% loss + jitter 300ms: checklistの遅延/ロス要件を再現。",
+        description="3s delay + 20% loss + 300ms jitter (disaster worst-case).",
         overrides={"timeout": 8.0, "loss_rate": 0.2, "jitter": 0.3, "requests": 200, "concurrency": 16, "max_nack_rounds": 5},
     ),
     Scenario(
         key="jitter_spike",
-        description="ジッター大 (350ms) で順序逆転・再送暴走をチェック。",
+        description="Jitter 350ms spike: reorder/timeout/backoff stability check.",
         overrides={"timeout": 5.0, "jitter": 0.35, "requests": 200, "concurrency": 16},
     ),
     Scenario(
         key="loss_heavy",
-        description="ロス25% で再送/バックオフの安定性を確認。",
+        description="25% loss: retry backoff and stability check.",
         overrides={"timeout": 7.0, "loss_rate": 0.25, "requests": 220, "concurrency": 20, "max_nack_rounds": 5},
     ),
     Scenario(
         key="burst_traffic",
-        description="高並列・高PPSバースト（マルチストリームとburst耐性）。",
+        description="High concurrency burst: PPS and throughput durability.",
         overrides={"requests": 800, "concurrency": 48, "timeout": 6.0, "loss_rate": 0.05, "max_nack_rounds": 4},
     ),
     Scenario(
         key="multistream_sustained",
-        description="中負荷で長めの持続（再送バッファ枯渇/リークを観察）。",
+        description="Mid-load sustained run: watch for leaks and drift.",
         overrides={"requests": 400, "concurrency": 32, "timeout": 4.5, "jitter": 0.08, "delay": 0.01},
     ),
     Scenario(
         key="flap_drop",
-        description="断続的ドロップ（20%）＋小さな待ちを挟み、断続断後の復帰を確認。",
+        description="Intermittent drop: 20% loss + small delay to verify recovery.",
         overrides={
             "requests": 150,
             "concurrency": 12,
@@ -74,7 +74,7 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         key="flap_harsh",
-        description="強いフラップ（約1.3秒周期で0.25秒ブラックアウト）＋軽ロス。復元性を重点確認。",
+        description="Harsh flap: 1.3s interval blackouts (0.25s) + light loss; focus on recovery.",
         overrides={
             "requests": 200,
             "concurrency": 16,
@@ -92,7 +92,7 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         key="flap_recovery_tuned",
-        description="フラップ緩和版（約1.3秒周期で0.12秒断＋再送/ハートビート強化）で回復率を確認。",
+        description="Gentler flap: shorter blackout with heartbeat/retry emphasis.",
         overrides={
             "requests": 200,
             "concurrency": 16,
@@ -109,7 +109,7 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         key="mtu_variation_like",
-        description="MTU変動の近似（フラグメント相当の小さいチャンクを強制受信）。",
+        description="MTU variation approximation: smaller buffer + mild loss/jitter.",
         overrides={
             "requests": 240,
             "concurrency": 24,
@@ -122,7 +122,7 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         key="gz_large_body",
-        description="10MBクラスの巨大レスポンスをdemo-serverで返し、デコード/転送負荷を見る。",
+        description="10MB body via demo server to stress compression/streaming.",
         overrides={
             "requests": 10,
             "concurrency": 4,
@@ -134,7 +134,7 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         key="sw_fetch_3000_like",
-        description="3000本相当の大量フェッチを模擬（軽いロス付き）。",
+        description="3000-fetch like load with mild loss/jitter.",
         overrides={
             "requests": 3000,
             "concurrency": 120,
@@ -261,19 +261,6 @@ def main(argv: list[str] | None = None) -> None:
             ),
             encoding="utf-8",
         )
-
-    print(
-        json.dumps(
-            {
-                "history_file": str(history_path),
-                "suite_summary": str(suite_summary_path) if suite_summary_path else None,
-                "scenarios_run": [rec["scenario"] for rec in all_records],
-                "count": len(all_records),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
 
 
 if __name__ == "__main__":
