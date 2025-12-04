@@ -9,6 +9,7 @@ optionally adding packet loss/jitter to emulate harsh networks.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import queue
@@ -263,6 +264,82 @@ class DemoServer:
         return encode_success_response(request, self._body, status_code=200)
 
 
+class AsyncDemoServer:
+    """Asyncio-based UDP responder to exercise concurrent handling."""
+
+    def __init__(self, host: str, port: int, psk: bytes, body: bytes, timeout: float) -> None:
+        self._host = host
+        self._port = port
+        self._psk = psk
+        self._body = body
+        self._timeout = timeout
+        self._loop = asyncio.new_event_loop()
+        self._transport: asyncio.DatagramTransport | None = None
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._address: tuple[str, int] | None = None
+
+    @property
+    def address(self) -> tuple[str, int]:
+        if self._address is None:
+            raise RuntimeError("server not started")
+        return self._address
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._transport:
+            self._loop.call_soon_threadsafe(self._transport.close)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join()
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+
+        class DemoProtocol(asyncio.DatagramProtocol):
+            def __init__(self, outer: "AsyncDemoServer") -> None:
+                self.outer = outer
+
+            def connection_made(self, transport: asyncio.BaseTransport) -> None:
+                self.outer._transport = transport  # type: ignore[assignment]
+                sockname = transport.get_extra_info("sockname")
+                if isinstance(sockname, tuple):
+                    self.outer._address = (sockname[0], sockname[1])
+
+            def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+                try:
+                    parsed = decode_packet_py(data, self.outer._psk)
+                    req = IncomingRequest(
+                        header=parsed["header"],
+                        payload=parsed["payload"],
+                        packet_type=parsed["type"],
+                        addr=addr,
+                        parsed=parsed,
+                        datagram=data,
+                        psk=self.outer._psk,
+                    )
+                    responses = encode_error_response(req, 2, 502, "demo error") if "error" in req.payload.get("url", "") else encode_success_response(req, self.outer._body, status_code=200)
+                    for resp in responses:
+                        self.outer._transport.sendto(bytes(resp), addr)  # type: ignore[arg-type]
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("async demo server failed to handle datagram from %s", addr)
+
+        coro = self._loop.create_datagram_endpoint(
+            lambda: DemoProtocol(self),
+            local_addr=(self._host, self._port),
+        )
+        transport, _ = self._loop.run_until_complete(coro)
+        if transport.get_extra_info("sockname"):
+            sockname = transport.get_extra_info("sockname")
+            if isinstance(sockname, tuple):
+                self._address = (sockname[0], sockname[1])
+        try:
+            self._loop.run_forever()
+        finally:
+            transport.close()
+            self._loop.close()
+
+
 class LogWriter:
     def __init__(self, path: Path, extra: Mapping[str, object] | None = None) -> None:
         self._path = path
@@ -420,6 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
     parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
+    parser.add_argument("--async-demo-server", action="store_true", help="Use asyncio-based demo UDP server (concurrent handling)")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
 
@@ -433,7 +511,7 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
     log_context = getattr(args, "log_context", None)
     logger = LogWriter(Path(args.log_file), extra=log_context) if args.log_file else None
 
-    server: DemoServer | None = None
+    server: DemoServer | AsyncDemoServer | None = None
     target = (args.host, args.port)
     if args.demo_server:
         if args.demo_body_file:
@@ -444,7 +522,10 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             body_bytes = seed_byte * args.demo_body_size  # ensure exact byte length, avoid accidental multiplier
         else:
             body_bytes = args.demo_body.encode("utf-8")
-        server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
+        if args.async_demo_server:
+            server = AsyncDemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
+        else:
+            server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address
         LOGGER.info("demo server listening on %s:%s", *target)
