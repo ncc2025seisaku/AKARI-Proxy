@@ -277,6 +277,27 @@ class AkariUdpClient:
                 accumulator.add_chunk(parsed)
                 seq_total = accumulator.seq_total
                 seq = payload.get("seq")
+
+                # 欠損があれば ACK を送って最初の欠損シーケンスを通知
+                if (
+                    self._version >= 2
+                    and self._max_ack_rounds > acks_sent
+                    and seq_total is not None
+                    and not accumulator.complete
+                ):
+                    first_missing = self._first_missing_seq(accumulator)
+                    if first_missing is not None:
+                        ack = encode_ack_v2_py(first_missing, message_id, timestamp, self._psk)
+                        sock.sendto(ack, self._remote_addr)
+                        bytes_sent += len(ack)
+                        acks_sent += 1
+                        LOGGER.debug(
+                            "send ACK message_id=%s first_missing=%s acks_sent=%d",
+                            message_id,
+                            first_missing,
+                            acks_sent,
+                        )
+
                 if accumulator.complete:
                     break
 
