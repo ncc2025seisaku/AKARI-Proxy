@@ -119,7 +119,8 @@ async def fetch_async(
     *,
     timeout: float = DEFAULT_TIMEOUT,
     max_bytes: int = MAX_BODY_BYTES,
-) -> HttpResponse:
+    session=None,
+    ) -> HttpResponse:
     """非同期版 GET 取得。aiohttp を使用する。"""
 
     try:
@@ -129,15 +130,17 @@ async def fetch_async(
 
     normalized_url = _normalize_url(url)
     timeout_cfg = aiohttp.ClientTimeout(total=timeout, sock_read=timeout, sock_connect=timeout)
-    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+
+    async def _do(session_obj: "aiohttp.ClientSession") -> HttpResponse:
         try:
-            async with session.get(
+            async with session_obj.get(
                 normalized_url,
                 headers={
                     "User-Agent": USER_AGENT,
                     "Accept-Encoding": ACCEPT_ENCODING,
                 },
                 allow_redirects=True,
+                compress=False,  # 明示的に圧縮解除をさせない（raw転送）
             ) as resp:
                 body_parts: list[bytes] = []
                 async for chunk in resp.content.iter_chunked(64 * 1024):
@@ -159,3 +162,9 @@ async def fetch_async(
             raise FetchError(f"HTTPエラー {exc.status}: {exc.message}") from exc
         except aiohttp.ClientError as exc:
             raise FetchError(str(exc)) from exc
+
+    if session is not None:
+        return await _do(session)
+
+    async with aiohttp.ClientSession(timeout=timeout_cfg, auto_decompress=False) as owned_session:
+        return await _do(owned_session)

@@ -155,6 +155,7 @@ class AkariUdpClient:
         max_ack_rounds: int = 1,
         use_encryption: bool = False,
         initial_request_retries: int = 1,
+        sock_timeout: float = 1.0,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -166,6 +167,10 @@ class AkariUdpClient:
         self._use_encryption = use_encryption
         self._version = protocol_version
         self._initial_request_retries = max(0, int(initial_request_retries))
+        self._sock_timeout = sock_timeout
+
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.settimeout(self._sock_timeout)
 
     def send_request(
         self,
@@ -191,124 +196,123 @@ class AkariUdpClient:
         bytes_received = 0
         acks_sent = 0
 
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(1.0)  # 短いポーリングでタイムアウト判定
-            sock.sendto(datagram, self._remote_addr)
-            last_activity = time.monotonic()  # 送信時点からタイマー開始
-            nacks_sent = 0
-            req_retries_left = self._initial_request_retries
-            while True:
-                try:
-                    data, _ = sock.recvfrom(self._buffer_size)
-                except socket.timeout:
-                    # 何も受信できていない場合はリクエスト自体を限定回数で再送
-                    if not packets and req_retries_left > 0:
-                        sock.sendto(datagram, self._remote_addr)
-                        bytes_sent += len(datagram)
-                        req_retries_left -= 1
-                        last_activity = time.monotonic()
-                        LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
-                        continue
-
-                    # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
-                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
-                    if (
-                        self._version >= 2
-                        and allow_nack
-                        and accumulator.seq_total is not None
-                        and not accumulator.complete
-                    ):
-                        missing_bitmap = self._build_missing_bitmap(accumulator)
-                        if missing_bitmap:
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            bytes_sent += len(nack)
-                            nacks_sent += 1
-                            last_activity = time.monotonic()
-                            LOGGER.debug(
-                                "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
-                                message_id,
-                                len(missing_bitmap),
-                                nacks_sent,
-                            )
-                            continue
-
-                    if self._timeout is not None and (time.monotonic() - last_activity) >= self._timeout:
-                        return ResponseOutcome(
-                            message_id=message_id,
-                            packets=packets,
-                            body=None,
-                            status_code=None,
-                            headers=None,
-                            error=None,
-                            complete=False,
-                            timed_out=True,
-                            bytes_sent=bytes_sent,
-                            bytes_received=bytes_received,
-                        )
+        sock = self._sock
+        sock.sendto(datagram, self._remote_addr)
+        last_activity = time.monotonic()  # 送信時点からタイマー開始
+        nacks_sent = 0
+        req_retries_left = self._initial_request_retries
+        while True:
+            try:
+                data, _ = sock.recvfrom(self._buffer_size)
+            except socket.timeout:
+                # 何も受信できていない場合はリクエスト自体を限定回数で再送
+                if not packets and req_retries_left > 0:
+                    sock.sendto(datagram, self._remote_addr)
+                    bytes_sent += len(datagram)
+                    req_retries_left -= 1
+                    last_activity = time.monotonic()
+                    LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
                     continue
 
-                bytes_received += len(data)
-                parsed = decode_packet_py(data, self._psk)
-                native = _to_native(parsed)
-                packets.append(native)
-                last_activity = time.monotonic()
-                payload = parsed.get("payload", {})
-                chunk = payload.get("chunk")
-                chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
-                LOGGER.info(
-                    "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
-                    parsed.get("type"),
-                    parsed.get("header", {}).get("message_id"),
-                    payload.get("seq"),
-                    payload.get("seq_total"),
-                    chunk_len,
-                )
+                # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
+                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                if (
+                    self._version >= 2
+                    and allow_nack
+                    and accumulator.seq_total is not None
+                    and not accumulator.complete
+                ):
+                    missing_bitmap = self._build_missing_bitmap(accumulator)
+                    if missing_bitmap:
+                        nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                        sock.sendto(nack, self._remote_addr)
+                        bytes_sent += len(nack)
+                        nacks_sent += 1
+                        last_activity = time.monotonic()
+                        LOGGER.debug(
+                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                            message_id,
+                            len(missing_bitmap),
+                            nacks_sent,
+                        )
+                        continue
 
-                packet_type = parsed["type"]
-                if packet_type == "resp":
-                    accumulator.add_chunk(parsed)
-                    if (
-                        self._version >= 2
-                        and acks_sent < self._max_ack_rounds
-                        and accumulator.seq_total is not None
-                    ):
-                        missing = self._first_missing_seq(accumulator)
-                        if missing is not None:
-                            ack = encode_ack_v2_py(missing, message_id, timestamp, self._psk)
-                            sock.sendto(ack, self._remote_addr)
-                            bytes_sent += len(ack)
-                            acks_sent += 1
-                            LOGGER.debug(
-                                "send ACK message_id=%s first_missing=%s acks_sent=%d",
-                                message_id,
-                                missing,
-                                acks_sent,
-                            )
-                    if accumulator.complete:
-                        break
-                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
-                    if (
-                        self._version >= 2
-                        and allow_nack
-                        and accumulator.seq_total is not None
-                        and payload.get("seq") is not None
-                    ):
-                        missing_bitmap = self._build_missing_bitmap(accumulator)
-                        if missing_bitmap:
-                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                            sock.sendto(nack, self._remote_addr)
-                            bytes_sent += len(nack)
-                            nacks_sent += 1
-                            LOGGER.debug(
-                                "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
-                                message_id,
-                                len(missing_bitmap),
-                                nacks_sent,
-                            )
-                elif packet_type == "error":
-                    error_payload = parsed["payload"]
+                if self._timeout is not None and (time.monotonic() - last_activity) >= self._timeout:
+                    return ResponseOutcome(
+                        message_id=message_id,
+                        packets=packets,
+                        body=None,
+                        status_code=None,
+                        headers=None,
+                        error=None,
+                        complete=False,
+                        timed_out=True,
+                        bytes_sent=bytes_sent,
+                        bytes_received=bytes_received,
+                    )
+                continue
+
+            bytes_received += len(data)
+            parsed = decode_packet_py(data, self._psk)
+            native = _to_native(parsed)
+            packets.append(native)
+            last_activity = time.monotonic()
+            payload = parsed.get("payload", {})
+            chunk = payload.get("chunk")
+            chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
+            LOGGER.info(
+                "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
+                parsed.get("type"),
+                parsed.get("header", {}).get("message_id"),
+                payload.get("seq"),
+                payload.get("seq_total"),
+                chunk_len,
+            )
+
+            packet_type = parsed["type"]
+            if packet_type == "resp":
+                accumulator.add_chunk(parsed)
+                if (
+                    self._version >= 2
+                    and acks_sent < self._max_ack_rounds
+                    and accumulator.seq_total is not None
+                ):
+                    missing = self._first_missing_seq(accumulator)
+                    if missing is not None:
+                        ack = encode_ack_v2_py(missing, message_id, timestamp, self._psk)
+                        sock.sendto(ack, self._remote_addr)
+                        bytes_sent += len(ack)
+                        acks_sent += 1
+                        LOGGER.debug(
+                            "send ACK message_id=%s first_missing=%s acks_sent=%d",
+                            message_id,
+                            missing,
+                            acks_sent,
+                        )
+                if accumulator.complete:
                     break
+                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                if (
+                    self._version >= 2
+                    and allow_nack
+                    and accumulator.seq_total is not None
+                    and payload.get("seq") is not None
+                ):
+                    missing_bitmap = self._build_missing_bitmap(accumulator)
+                    if missing_bitmap:
+                        nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                        sock.sendto(nack, self._remote_addr)
+                        bytes_sent += len(nack)
+                        nacks_sent += 1
+                        LOGGER.debug(
+                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                            message_id,
+                            len(missing_bitmap),
+                            nacks_sent,
+                        )
+            elif packet_type == "error":
+                error_payload = parsed["payload"]
+                break
 
         body = accumulator.assembled_body() if accumulator.complete else None
         return ResponseOutcome(
@@ -323,6 +327,18 @@ class AkariUdpClient:
             bytes_sent=bytes_sent,
             bytes_received=bytes_received,
         )
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except Exception:
+            LOGGER.warning("failed to close udp client socket", exc_info=True)
+
+    def __enter__(self) -> "AkariUdpClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     def _build_missing_bitmap(self, acc: ResponseAccumulator) -> bytes:
         if acc.seq_total is None:

@@ -57,6 +57,13 @@ RESP_CACHE_LOCK = threading.RLock()
 HTTP_CACHE_DEFAULT_TTL = 30.0
 HTTP_CACHE: dict[str, tuple[float, HttpResponse]] = {}
 HTTP_CACHE_LOCK = threading.RLock()
+_fetch_async_func = fetch_async
+
+
+def set_fetch_async_func(func):
+    """テストやプール利用のために fetch_async 相当を差し替える。"""
+    global _fetch_async_func
+    _fetch_async_func = func
 
 
 def _now_timestamp() -> int:
@@ -522,7 +529,7 @@ async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
         return _encode_success_datagrams(request, cached_response)
 
     try:
-        response = await fetch_async(normalized_url)
+        response = await _fetch_async_func(normalized_url)
     except InvalidURLError as exc:
         return _encode_error(
             request,
