@@ -502,14 +502,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--delay", type=float, default=0.0, help="Sleep after each request (seconds)")
     parser.add_argument("--max-nack-rounds", type=int, default=3, help="How many times to send NACK when missing chunks")
     parser.add_argument("--buffer-size", type=int, default=65535, help="Socket recv buffer size")
-    parser.add_argument("--heartbeat-interval", type=float, default=0.0, help="Send lightweight re-probe after this idle time (seconds)")
+    parser.add_argument("--heartbeat-interval", type=float, default=0.0, help="Send lightweight re-probe after this idle time (seconds) (default 0: disabled)")
     parser.add_argument("--heartbeat-backoff", type=float, default=1.5, help="Backoff multiplier for heartbeat retries")
-    parser.add_argument("--max-retries", type=int, default=0, help="How many proactive re-sends to attempt on silence")
+    parser.add_argument("--max-retries", type=int, default=0, help="How many proactive re-sends to attempt on silence (default 0: disabled)")
     parser.add_argument(
         "--initial-retry-delay",
         type=float,
         default=0.0,
-        help="First retry delay (defaults to heartbeat interval if 0)",
+        help="First retry delay (defaults to heartbeat interval if 0; default 0 when heartbeat disabled)",
     )
     parser.add_argument("--retry-jitter", type=float, default=0.0, help="Random jitter added to retry scheduling (seconds)")
     parser.add_argument("--dual-send", action="store_true", help="Send each request twice with different message ids")

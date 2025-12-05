@@ -42,6 +42,8 @@ python loadtest/udp_load_runner.py `
 - `--demo-server` keeps traffic local; omit it when pointing to real proxies.
 - `--encrypt` sets the E flag (AKARI v2) for environments that enforce encryption.
 - `--remote-config` reads host/port/psk/require_encryption from `remote.toml` (env/file/plain PSK 読み込み対応)。
+- `--ack-rounds 0` でACK送信を無効化（デフォルト0: ACKなし運用）。
+- `--heartbeat-interval 0 --max-retries 0` でハートビート（静寂時再送）を無効化（デフォルト0: 送らない）。高トラフィックを避けたい場合はこのまま、必要なシナリオのみ明示的に有効化してください。
 
 ## Output
 The script prints a summary JSON to stdout. Example:
