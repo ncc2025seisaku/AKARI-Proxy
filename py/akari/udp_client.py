@@ -204,6 +204,9 @@ class AkariUdpClient:
         while True:
             try:
                 data, _ = sock.recvfrom(self._buffer_size)
+            except ConnectionResetError:
+                LOGGER.debug("recvfrom ConnectionResetError (ignored)")
+                continue
             except socket.timeout:
                 # 何も受信できていない場合はリクエスト自体を限定回数で再送
                 if not packets and req_retries_left > 0:
