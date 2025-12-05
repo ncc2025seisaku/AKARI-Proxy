@@ -106,6 +106,8 @@ class LoadTestClient(AkariUdpClient):
         bytes_sent_total = 0
         bytes_received_total = 0
         final_outcome: ResponseOutcome | None = None
+        total_nacks_sent = 0
+        request_retries = 0
 
         for attempt in range(self._initial_request_retries + 1):
             accumulator = ResponseAccumulator(message_id)
@@ -190,6 +192,8 @@ class LoadTestClient(AkariUdpClient):
 
             bytes_sent_total += bytes_sent
             bytes_received_total += bytes_received
+            total_nacks_sent += nack_sent
+            request_retries = attempt
 
             body = accumulator.assembled_body() if accumulator.complete else None
             final_outcome = ResponseOutcome(
@@ -203,6 +207,8 @@ class LoadTestClient(AkariUdpClient):
                 timed_out=timed_out,
                 bytes_sent=bytes_sent_total,
                 bytes_received=bytes_received_total,
+                nacks_sent=total_nacks_sent,
+                request_retries=request_retries,
             )
 
             if not timed_out:
@@ -227,6 +233,8 @@ class Counters:
     bytes_received: int = 0
     latencies: list[float] = field(default_factory=list)
     exceptions: int = 0
+    nacks_sent: int = 0
+    request_retries: int = 0
 
 
 class Aggregator:
@@ -245,6 +253,8 @@ class Aggregator:
                 self._counters.error += 1
             self._counters.bytes_sent += outcome.bytes_sent
             self._counters.bytes_received += outcome.bytes_received
+            self._counters.nacks_sent += getattr(outcome, "nacks_sent", 0)
+            self._counters.request_retries += getattr(outcome, "request_retries", 0)
 
     def add_exception(self, *, bytes_sent: int = 0, bytes_received: int = 0) -> None:
         with self._lock:
@@ -263,6 +273,8 @@ class Aggregator:
                 bytes_received=self._counters.bytes_received,
                 latencies=list(self._counters.latencies),
                 exceptions=self._counters.exceptions,
+                nacks_sent=self._counters.nacks_sent,
+                request_retries=self._counters.request_retries,
             )
         return copy
 
@@ -415,6 +427,8 @@ def summarize(counters: Counters, elapsed: float, total_requests: int) -> dict[s
         "exceptions": counters.exceptions,
         "bytes_sent": counters.bytes_sent,
         "bytes_received": counters.bytes_received,
+        "nacks_sent": counters.nacks_sent,
+        "request_retries": counters.request_retries,
         "latency_avg_sec": round(avg, 4),
         "latency_p95_sec": round(percentile(counters.latencies, 0.95), 4),
         "latency_p99_sec": round(percentile(counters.latencies, 0.99), 4),
@@ -483,6 +497,8 @@ def worker_main(
                         "error": outcome.error,
                         "bytes_sent": outcome.bytes_sent,
                         "bytes_received": outcome.bytes_received,
+                        "nacks_sent": getattr(outcome, "nacks_sent", 0),
+                        "request_retries": getattr(outcome, "request_retries", 0),
                         "timestamp": time.time(),
                     }
                 )

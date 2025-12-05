@@ -15,7 +15,8 @@ from typing import TypedDict
 from urllib import error, parse, request
 
 DEFAULT_TIMEOUT = 10.0
-MAX_BODY_BYTES = 1_000_000
+# 実験用に上限を拡大（1GB）
+MAX_BODY_BYTES = 1_000_000_000
 USER_AGENT = "AKARI-Proxy/0.1"
 # Prefer Brotli for効率, fallback to gzip/deflate.
 ACCEPT_ENCODING = "br, gzip, deflate"

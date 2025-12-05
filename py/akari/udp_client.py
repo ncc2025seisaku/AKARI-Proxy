@@ -80,6 +80,8 @@ class ResponseOutcome:
     timed_out: bool
     bytes_sent: int
     bytes_received: int
+    nacks_sent: int = 0
+    request_retries: int = 0
 
 
 STATIC_HEADER_IDS = {
@@ -252,6 +254,8 @@ class AkariUdpClient:
                         timed_out=True,
                         bytes_sent=bytes_sent,
                         bytes_received=bytes_received,
+                        nacks_sent=nacks_sent,
+                        request_retries=self._initial_request_retries - req_retries_left,
                     )
                 continue
 
@@ -339,6 +343,8 @@ class AkariUdpClient:
             timed_out=False,
             bytes_sent=bytes_sent,
             bytes_received=bytes_received,
+            nacks_sent=nacks_sent,
+            request_retries=self._initial_request_retries - req_retries_left,
         )
 
     def close(self) -> None:

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Disaster-mode scenario runner for AKARI-UDPv2.
 
 This script bundles multiple harsh-network scenarios derived from the
@@ -311,11 +311,13 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
     lines.append("")
 
     lines.append("## シナリオ別サマリ\n")
-    lines.append("| 状態 | シナリオ | 成功/総数 | 成功率 | タイムアウト | エラー | p95遅延 | RPS | 実行時間 |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("| 状態 | シナリオ | 成功/総数 | 成功率 | タイムアウト | エラー | NACK送信 | 再リクエスト | p95遅延 | RPS | 実行時間 |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
 
     worst_p95 = ("", 0.0)
     most_timeout = ("", 0)
+    most_nacks = ("", 0)
+    most_retries = ("", 0)
 
     for key in scenarios:
         rec = latest[key]
@@ -325,6 +327,8 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
         success = int(summary.get("success", 0))
         timeout = int(summary.get("timeout", 0))
         error = int(summary.get("error", 0))
+        nacks = int(summary.get("nacks_sent", 0))
+        retries = int(summary.get("request_retries", 0))
         p95 = float(summary.get("latency_p95_sec", 0.0) or 0.0)
         rps = float(summary.get("rps", 0.0) or 0.0)
         elapsed = float(summary.get("elapsed_sec", 0.0) or 0.0)
@@ -332,18 +336,24 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
         success_rate = (success / req * 100) if req else 0.0
         emoji = _status_emoji(success, timeout, error, req)
         lines.append(
-            f"| {emoji} | {key} | {success}/{req} | {success_rate:.1f}% | {timeout} | {error} | {_format_ms(p95)} | {rps:.1f} | {elapsed:.3f}s |"
+            f"| {emoji} | {key} | {success}/{req} | {success_rate:.1f}% | {timeout} | {error} | {nacks} | {retries} | {_format_ms(p95)} | {rps:.1f} | {elapsed:.3f}s |"
         )
 
         if p95 > worst_p95[1]:
             worst_p95 = (key, p95)
         if timeout > most_timeout[1]:
             most_timeout = (key, timeout)
+        if nacks > most_nacks[1]:
+            most_nacks = (key, nacks)
+        if retries > most_retries[1]:
+            most_retries = (key, retries)
 
     lines.append("")
     lines.append("## ハイライト")
     lines.append(f"- p95 が最も遅いシナリオ: **{worst_p95[0]}** ({worst_p95[1]*1000:.1f} ms)")
     lines.append(f"- タイムアウトが最も多いシナリオ: **{most_timeout[0]}** ({most_timeout[1]} 件)")
+    lines.append(f"- NACK を最も多く送ったシナリオ: **{most_nacks[0]}** ({most_nacks[1]} 回)")
+    lines.append(f"- リクエスト再送が最も多いシナリオ: **{most_retries[0]}** ({most_retries[1]} 回)")
     lines.append("")
 
     lines.append("## 見方")
@@ -352,6 +362,8 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
     lines.append("- ❌: エラーあり")
     lines.append("- p95遅延: 95%点の応答時間（ミリ秒）")
     lines.append("- RPS: Requests per second（1秒あたり平均完了数）")
+    lines.append("- NACK送信: 欠損補完のために送信した NACK パケット総数")
+    lines.append("- 再リクエスト: タイムアウト後にリクエスト全体を再送した回数（初回送信を除く）")
     lines.append("")
     return "\n".join(lines)
 
@@ -444,3 +456,4 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
