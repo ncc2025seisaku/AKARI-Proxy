@@ -24,6 +24,7 @@ from .http_client import (
     InvalidURLError,
     TimeoutFetchError,
     fetch,
+    fetch_async,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -442,6 +443,115 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             message=str(exc),
         )
     except Exception as exc:  # noqa: BLE001 - 予期せぬ例外も握り潰してAKARIエラーで返す
+        LOGGER.exception("unexpected error while fetching url=%s", url)
+        return _encode_error(
+            request,
+            error_code=ERROR_UNEXPECTED,
+            http_status=500,
+            message="internal server error",
+        )
+
+    LOGGER.info(
+        "success fetch message_id=%s status=%s body_len=%s",
+        request.header.get("message_id"),
+        response["status_code"],
+        len(response["body"]),
+    )
+    _maybe_store_http_cache(normalized_url, response, now=time.time())
+    return _encode_success_datagrams(request, response)
+
+
+async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
+    """非同期サーバ用のハンドラ。fetch を async 版で行う以外は同じ。"""
+
+    if (
+        REQUIRE_ENCRYPTION
+        and request.packet_type == "req"
+        and (int(request.header.get("flags", 0)) & FLAG_ENCRYPT) == 0
+    ):
+        return _encode_error(
+            request,
+            error_code=ERROR_UNSUPPORTED_PACKET,
+            http_status=400,
+            message="encryption required (set E flag)",
+        )
+
+    if request.packet_type == "nack":
+        return _handle_nack(request)
+    if request.packet_type == "ack":
+        return _handle_ack(request)
+
+    if request.packet_type != "req":
+        return _encode_error(
+            request,
+            error_code=ERROR_UNSUPPORTED_PACKET,
+            http_status=400,
+            message=f"unsupported packet type: {request.packet_type}",
+        )
+
+    url = request.payload.get("url")
+    if not isinstance(url, str) or not url:
+        return _encode_error(
+            request,
+            error_code=ERROR_INVALID_URL,
+            http_status=400,
+            message="payload.url is missing",
+        )
+
+    normalized_url = _normalize_cache_key(url)
+
+    LOGGER.info(
+        "handling request message_id=%s url=%s from=%s",
+        request.header.get("message_id"),
+        normalized_url,
+        request.addr,
+    )
+    LOGGER.debug(
+        "packet detail type=%s ver=%s flags=0x%x seq_total=%s",
+        request.packet_type,
+        request.header.get("version"),
+        request.header.get("flags", 0),
+        request.header.get("seq_total"),
+    )
+
+    now = time.time()
+    _purge_http_cache(now=now)
+    cached_response = _get_cached_http_response(normalized_url, now=now)
+    if cached_response is not None:
+        LOGGER.info("serve cached response message_id=%s url=%s", request.header.get("message_id"), normalized_url)
+        return _encode_success_datagrams(request, cached_response)
+
+    try:
+        response = await fetch_async(normalized_url)
+    except InvalidURLError as exc:
+        return _encode_error(
+            request,
+            error_code=ERROR_INVALID_URL,
+            http_status=400,
+            message=str(exc),
+        )
+    except BodyTooLargeError as exc:
+        return _encode_error(
+            request,
+            error_code=ERROR_RESPONSE_TOO_LARGE,
+            http_status=502,
+            message=str(exc),
+        )
+    except TimeoutFetchError as exc:
+        return _encode_error(
+            request,
+            error_code=ERROR_TIMEOUT,
+            http_status=504,
+            message=str(exc),
+        )
+    except FetchError as exc:
+        return _encode_error(
+            request,
+            error_code=ERROR_UPSTREAM_FAILURE,
+            http_status=502,
+            message=str(exc),
+        )
+    except Exception:  # noqa: BLE001
         LOGGER.exception("unexpected error while fetching url=%s", url)
         return _encode_error(
             request,

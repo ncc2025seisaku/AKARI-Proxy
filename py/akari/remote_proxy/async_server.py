@@ -10,26 +10,27 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import socket
+import sys
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, Sequence, Callable
+from typing import Iterable, Sequence, Callable, Awaitable
 
 from akari_udp_py import decode_packet_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
-from .handler import handle_request, set_require_encryption
+from .handler import handle_request_async, set_require_encryption
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "conf" / "remote.toml"
 
 
 class RemoteProxyProtocol(asyncio.DatagramProtocol):
-    def __init__(self, psk: bytes, handler: Callable[[IncomingRequest], Sequence[bytes]], loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor):
+    def __init__(self, psk: bytes, handler: Callable[[IncomingRequest], Awaitable[Sequence[bytes]]], loop: asyncio.AbstractEventLoop):
         self.psk = psk
         self.handler = handler
         self.loop = loop
-        self.executor = executor
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
@@ -39,11 +40,12 @@ class RemoteProxyProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr) -> None:
         # fire-and-forgetタスクで処理（送信も含む）
+        LOGGER.debug("recv datagram len=%d from %s", len(data), addr)
         self.loop.create_task(self._process_datagram(data, addr))
 
     async def _process_datagram(self, data: bytes, addr) -> None:
         try:
-            parsed = await self.loop.run_in_executor(self.executor, decode_packet_py, data, self.psk)
+            parsed = await self.loop.run_in_executor(None, decode_packet_py, data, self.psk)
         except ValueError as exc:
             message = str(exc) or exc.__class__.__name__
             if message in {"HMAC mismatch", "invalid PSK"}:
@@ -65,11 +67,19 @@ class RemoteProxyProtocol(asyncio.DatagramProtocol):
                 datagram=data,
                 psk=self.psk,
             )
-            datagrams = await self.loop.run_in_executor(self.executor, self.handler, request)
+            LOGGER.debug(
+                "decoded packet type=%s msg=%s ver=%s from=%s",
+                parsed.get("type"),
+                request.header.get("message_id"),
+                request.header.get("version"),
+                addr,
+            )
+            datagrams = await self.handler(request)
             if not self.transport:
                 return
             for dg in datagrams:
                 try:
+                    LOGGER.debug("send datagram len=%d to %s", len(dg), addr)
                     self.transport.sendto(bytes(dg), addr)
                 except Exception:
                     LOGGER.exception("failed to send datagram to %s", addr)
@@ -83,17 +93,27 @@ async def serve_remote_proxy_async(
     *,
     psk: bytes,
     logger: logging.Logger | None = None,
-    workers: int | None = None,
 ) -> None:
     """asyncio版のリモートプロキシを起動する。"""
 
     logger = logger or LOGGER
     loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=workers)
+
+    # Windows 環境で ICMP Port Unreachable を受け取った際に ConnectionResetError で
+    # トランスポートが閉じないよう無効化する。
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((host, port))
+    sock.setblocking(False)
+    if os.name == "nt":
+        SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
+        try:
+            sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
+        except (OSError, ValueError):
+            logger.warning("could not disable UDP connreset (Windows); continuing")
 
     transport, _protocol = await loop.create_datagram_endpoint(
-        lambda: RemoteProxyProtocol(psk, handle_request, loop, executor),
-        local_addr=(host, port),
+        lambda: RemoteProxyProtocol(psk, handle_request_async, loop),
+        sock=sock,
         allow_broadcast=False,
     )
 
@@ -101,7 +121,6 @@ async def serve_remote_proxy_async(
         await asyncio.Future()  # run forever
     finally:
         transport.close()
-        executor.shutdown(wait=False)
         logger.info("async remote proxy stopped")
 
 
@@ -118,7 +137,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=str(DEFAULT_CONFIG),
         help="Path to remote proxy configuration (default: conf/remote.toml)",
     )
-    parser.add_argument("--workers", type=int, help="ThreadPool max workers for handler/fetch (default: Python executor default)")
+    parser.add_argument("--workers", type=int, default=None, help="(unused, kept for compatibility)")
     parser.add_argument("--log-level", help="override logging level (default: config.log_level)")
     args = parser.parse_args(argv)
 
@@ -138,7 +157,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             config.port,
             psk=config.psk,
             # enforce encryption based on config
-            workers=args.workers,
             logger=logging.getLogger("akari.remote_proxy.async_server"),
         )
     )

@@ -151,19 +151,21 @@ class AkariUdpClient:
         timeout: float | None = None,
         buffer_size: int = 65535,
         protocol_version: int = 2,
-        max_nack_rounds: int = 3,
+        max_nack_rounds: int | None = 3,
         max_ack_rounds: int = 1,
         use_encryption: bool = False,
+        initial_request_retries: int = 1,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
-        # timeout は無視するが、後方互換のため受け取る
+        # timeout=None のときは無限待ち
         self._timeout = timeout
         self._buffer_size = buffer_size
-        self._max_nack_rounds = max(0, int(max_nack_rounds))
+        self._max_nack_rounds = None if max_nack_rounds is None else max(0, int(max_nack_rounds))
         self._max_ack_rounds = max(0, int(max_ack_rounds))
         self._use_encryption = use_encryption
         self._version = protocol_version
+        self._initial_request_retries = max(0, int(initial_request_retries))
 
     def send_request(
         self,
@@ -190,21 +192,67 @@ class AkariUdpClient:
         acks_sent = 0
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(None)
+            sock.settimeout(1.0)  # 短いポーリングでタイムアウト判定
             sock.sendto(datagram, self._remote_addr)
-            last_received = time.monotonic()
+            last_activity = time.monotonic()  # 送信時点からタイマー開始
             nacks_sent = 0
+            req_retries_left = self._initial_request_retries
             while True:
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
+                    # 何も受信できていない場合はリクエスト自体を限定回数で再送
+                    if not packets and req_retries_left > 0:
+                        sock.sendto(datagram, self._remote_addr)
+                        bytes_sent += len(datagram)
+                        req_retries_left -= 1
+                        last_activity = time.monotonic()
+                        LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
+                        continue
+
+                    # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
+                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                    if (
+                        self._version >= 2
+                        and allow_nack
+                        and accumulator.seq_total is not None
+                        and not accumulator.complete
+                    ):
+                        missing_bitmap = self._build_missing_bitmap(accumulator)
+                        if missing_bitmap:
+                            nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            sock.sendto(nack, self._remote_addr)
+                            bytes_sent += len(nack)
+                            nacks_sent += 1
+                            last_activity = time.monotonic()
+                            LOGGER.debug(
+                                "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                                message_id,
+                                len(missing_bitmap),
+                                nacks_sent,
+                            )
+                            continue
+
+                    if self._timeout is not None and (time.monotonic() - last_activity) >= self._timeout:
+                        return ResponseOutcome(
+                            message_id=message_id,
+                            packets=packets,
+                            body=None,
+                            status_code=None,
+                            headers=None,
+                            error=None,
+                            complete=False,
+                            timed_out=True,
+                            bytes_sent=bytes_sent,
+                            bytes_received=bytes_received,
+                        )
                     continue
 
                 bytes_received += len(data)
                 parsed = decode_packet_py(data, self._psk)
                 native = _to_native(parsed)
                 packets.append(native)
-                last_received = time.monotonic()
+                last_activity = time.monotonic()
                 payload = parsed.get("payload", {})
                 chunk = payload.get("chunk")
                 chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
@@ -229,12 +277,20 @@ class AkariUdpClient:
                         if missing is not None:
                             ack = encode_ack_v2_py(missing, message_id, timestamp, self._psk)
                             sock.sendto(ack, self._remote_addr)
+                            bytes_sent += len(ack)
                             acks_sent += 1
+                            LOGGER.debug(
+                                "send ACK message_id=%s first_missing=%s acks_sent=%d",
+                                message_id,
+                                missing,
+                                acks_sent,
+                            )
                     if accumulator.complete:
                         break
+                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                     if (
                         self._version >= 2
-                        and nacks_sent < self._max_nack_rounds
+                        and allow_nack
                         and accumulator.seq_total is not None
                         and payload.get("seq") is not None
                     ):
@@ -242,7 +298,14 @@ class AkariUdpClient:
                         if missing_bitmap:
                             nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
                             sock.sendto(nack, self._remote_addr)
+                            bytes_sent += len(nack)
                             nacks_sent += 1
+                            LOGGER.debug(
+                                "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                                message_id,
+                                len(missing_bitmap),
+                                nacks_sent,
+                            )
                 elif packet_type == "error":
                     error_payload = parsed["payload"]
                     break
