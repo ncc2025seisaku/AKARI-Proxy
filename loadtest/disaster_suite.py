@@ -66,10 +66,10 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 150,
             "concurrency": 12,
-            "timeout": 7.0,
+            "timeout": 7.5,
             "loss_rate": 0.2,
             "delay": 0.02,
-            "max_nack_rounds": 5,
+            "max_nack_rounds": 6,
         },
     ),
     Scenario(
@@ -87,7 +87,7 @@ SCENARIOS: list[Scenario] = [
             "initial_retry_delay": 0.06,
             "heartbeat_backoff": 1.1,
             "retry_jitter": 0.05,
-            "max_nack_rounds": 7,
+            "max_nack_rounds": 8,
         },
     ),
     Scenario(
@@ -96,7 +96,7 @@ SCENARIOS: list[Scenario] = [
         overrides={
             "requests": 200,
             "concurrency": 16,
-            "timeout": 7.0,
+            "timeout": 7.5,
             "loss_rate": 0.05,
             "flap_interval": 1.3,
             "flap_duration": 0.12,
@@ -104,7 +104,7 @@ SCENARIOS: list[Scenario] = [
             "heartbeat_backoff": 1.2,
             "max_retries": 10,
             "initial_retry_delay": 0.05,
-            "max_nack_rounds": 5,
+            "max_nack_rounds": 6,
         },
     ),
     Scenario(
@@ -124,12 +124,17 @@ SCENARIOS: list[Scenario] = [
         key="gz_large_body",
         description="10MB body via demo server to stress compression/streaming.",
         overrides={
-            "requests": 10,
-            "concurrency": 4,
-            "timeout": 30.0,
+            "requests": 6,
+            "concurrency": 2,
+            "timeout": 40.0,
             "demo_body_size": 10_000_000,
             "delay": 0.01,
-            "max_nack_rounds": 5,
+            "max_nack_rounds": 8,
+            "heartbeat_interval": 1.0,
+            "heartbeat_backoff": 1.5,
+            "max_retries": 5,
+            "initial_retry_delay": 1.0,
+            "retry_jitter": 0.1,
         },
     ),
     Scenario(

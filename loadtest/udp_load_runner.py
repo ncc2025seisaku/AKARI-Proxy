@@ -31,6 +31,7 @@ from akari.udp_server import AkariUdpServer, IncomingRequest, encode_error_respo
 from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py, encode_request_v2_py  # noqa: E402
 
 LOGGER = logging.getLogger("akari.loadtest")
+NACK_MIN_INTERVAL = 0.05  # seconds; avoid NACK連打
 
 
 def parse_psk(value: str, *, hex_mode: bool) -> bytes:
@@ -119,8 +120,8 @@ class LoadTestClient(AkariUdpClient):
                 try:
                     data, _ = sock.recvfrom(self._buffer_size)
                 except socket.timeout:
-                    timed_out = True
-                    break
+                    # Still within overall timeout; keep waiting for late chunks.
+                    continue
 
                 if self._flap_interval and self._flap_duration:
                     if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
@@ -162,7 +163,7 @@ class LoadTestClient(AkariUdpClient):
                     ):
                         missing_bitmap = self._build_missing_bitmap(accumulator)
                         if missing_bitmap:
-                            if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= 0.05:
+                            if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL:
                                 nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
                                 sock.sendto(nack, self._remote_addr)
                                 nack_sent += 1
