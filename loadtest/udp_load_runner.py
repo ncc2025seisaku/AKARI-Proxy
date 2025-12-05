@@ -81,6 +81,8 @@ class LoadTestClient(AkariUdpClient):
         self._flap_interval = max(0.0, flap_interval)
         self._flap_duration = max(0.0, flap_duration)
         self._started_at = time.monotonic()
+        # 最初のレスポンスは欠損させずに通すためのガード
+        self._skip_first_drop = True
 
     def send_request(  # type: ignore[override]
         self,
@@ -136,14 +138,17 @@ class LoadTestClient(AkariUdpClient):
                     # Still within overall timeout; keep waiting for late chunks.
                     continue
 
-                if self._flap_interval and self._flap_duration:
-                    if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
-                        LOGGER.debug("drop packet by flap window message_id=%s", message_id)
-                        continue
+                if not self._skip_first_drop:
+                    if self._flap_interval and self._flap_duration:
+                        if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
+                            LOGGER.debug("drop packet by flap window message_id=%s", message_id)
+                            continue
 
-                if self._loss_rate and random.random() < self._loss_rate:
-                    LOGGER.debug("drop packet message_id=%s", message_id)
-                    continue
+                    if self._loss_rate and random.random() < self._loss_rate:
+                        LOGGER.debug("drop packet message_id=%s", message_id)
+                        continue
+                else:
+                    self._skip_first_drop = False
                 bytes_received += len(data)
                 if self._jitter:
                     time.sleep(random.uniform(0, self._jitter))

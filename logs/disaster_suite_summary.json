@@ -1,9 +1,9 @@
 {
-  "started_at": 1764917936.5438807,
-  "finished_at": 1764918104.4070978,
+  "started_at": 1764942186.8140173,
+  "finished_at": 1764942348.8349583,
   "records": [
     {
-      "timestamp": 1764917936.6211324,
+      "timestamp": 1764942187.3391726,
       "iteration": 1,
       "scenario": "baseline_demo",
       "description": "Baseline sanity: local demo server, no loss/jitter.",
@@ -37,16 +37,16 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 5200,
-        "bytes_received": 52480,
-        "latency_avg_sec": 0.0035,
-        "latency_p95_sec": 0.0063,
-        "latency_p99_sec": 0.0067,
-        "elapsed_sec": 0.072,
-        "rps": 1114.86
+        "bytes_received": 60280,
+        "latency_avg_sec": 0.0491,
+        "latency_p95_sec": 0.4436,
+        "latency_p99_sec": 0.472,
+        "elapsed_sec": 0.517,
+        "rps": 154.82
       }
     },
     {
-      "timestamp": 1764917966.8529396,
+      "timestamp": 1764942210.8255837,
       "iteration": 1,
       "scenario": "delay_loss_extreme",
       "description": "3s delay + 20% loss + 300ms jitter (disaster worst-case).",
@@ -75,21 +75,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 167,
-        "timeout": 33,
+        "success": 168,
+        "timeout": 32,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 109552,
-        "latency_avg_sec": 0.1468,
-        "latency_p95_sec": 0.2779,
-        "latency_p99_sec": 0.2905,
-        "elapsed_sec": 30.22,
-        "rps": 6.62
+        "bytes_received": 130368,
+        "latency_avg_sec": 0.1593,
+        "latency_p95_sec": 0.2867,
+        "latency_p99_sec": 0.3005,
+        "elapsed_sec": 23.472,
+        "rps": 8.52
       }
     },
     {
-      "timestamp": 1764917969.0271547,
+      "timestamp": 1764942213.2038894,
       "iteration": 1,
       "scenario": "jitter_spike",
       "description": "Jitter 350ms spike: reorder/timeout/backoff stability check.",
@@ -123,16 +123,16 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 131200,
-        "latency_avg_sec": 0.1595,
-        "latency_p95_sec": 0.3178,
-        "latency_p99_sec": 0.3454,
-        "elapsed_sec": 2.152,
-        "rps": 92.95
+        "bytes_received": 155200,
+        "latency_avg_sec": 0.1735,
+        "latency_p95_sec": 0.3256,
+        "latency_p99_sec": 0.3414,
+        "elapsed_sec": 2.356,
+        "rps": 84.9
       }
     },
     {
-      "timestamp": 1764917999.2128732,
+      "timestamp": 1764942243.3814955,
       "iteration": 1,
       "scenario": "loss_heavy",
       "description": "25% loss: retry backoff and stability check.",
@@ -161,21 +161,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 165,
-        "timeout": 55,
+        "success": 164,
+        "timeout": 56,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 14300,
-        "bytes_received": 108240,
-        "latency_avg_sec": 0.0066,
-        "latency_p95_sec": 0.017,
-        "latency_p99_sec": 0.0214,
-        "elapsed_sec": 30.155,
+        "bytes_received": 127264,
+        "latency_avg_sec": 0.0074,
+        "latency_p95_sec": 0.0159,
+        "latency_p99_sec": 0.0172,
+        "elapsed_sec": 30.138,
         "rps": 7.3
       }
     },
     {
-      "timestamp": 1764918009.8695593,
+      "timestamp": 1764942254.1441612,
       "iteration": 1,
       "scenario": "burst_traffic",
       "description": "High concurrency burst: PPS and throughput durability.",
@@ -204,21 +204,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 763,
-        "timeout": 37,
+        "success": 765,
+        "timeout": 35,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 52000,
-        "bytes_received": 500528,
-        "latency_avg_sec": 0.0181,
-        "latency_p95_sec": 0.029,
-        "latency_p99_sec": 0.0303,
-        "elapsed_sec": 10.564,
-        "rps": 75.73
+        "bytes_received": 593640,
+        "latency_avg_sec": 0.025,
+        "latency_p95_sec": 0.0392,
+        "latency_p99_sec": 0.0473,
+        "elapsed_sec": 10.671,
+        "rps": 74.97
       }
     },
     {
-      "timestamp": 1764918010.6209936,
+      "timestamp": 1764942254.8773565,
       "iteration": 1,
       "scenario": "multistream_sustained",
       "description": "Mid-load sustained run: watch for leaks and drift.",
@@ -252,16 +252,16 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 26000,
-        "bytes_received": 262400,
-        "latency_avg_sec": 0.0439,
-        "latency_p95_sec": 0.0805,
-        "latency_p99_sec": 0.083,
-        "elapsed_sec": 0.726,
-        "rps": 551.21
+        "bytes_received": 310400,
+        "latency_avg_sec": 0.0411,
+        "latency_p95_sec": 0.0778,
+        "latency_p99_sec": 0.0813,
+        "elapsed_sec": 0.696,
+        "rps": 575.02
       }
     },
     {
-      "timestamp": 1764918041.14348,
+      "timestamp": 1764942285.250581,
       "iteration": 1,
       "scenario": "flap_drop",
       "description": "Intermittent drop: 20% loss + small delay to verify recovery.",
@@ -290,21 +290,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 116,
-        "timeout": 34,
+        "success": 118,
+        "timeout": 32,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 9750,
-        "bytes_received": 76096,
-        "latency_avg_sec": 0.0032,
-        "latency_p95_sec": 0.006,
-        "latency_p99_sec": 0.0068,
-        "elapsed_sec": 30.515,
-        "rps": 4.92
+        "bytes_received": 91568,
+        "latency_avg_sec": 0.0027,
+        "latency_p95_sec": 0.0052,
+        "latency_p99_sec": 0.0059,
+        "elapsed_sec": 30.361,
+        "rps": 4.94
       }
     },
     {
-      "timestamp": 1764918061.2922008,
+      "timestamp": 1764942305.4647646,
       "iteration": 1,
       "scenario": "flap_harsh",
       "description": "Harsh flap: 1.3s interval blackouts (0.25s) + light loss; focus on recovery.",
@@ -333,21 +333,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 179,
-        "timeout": 21,
+        "success": 174,
+        "timeout": 26,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 117424,
-        "latency_avg_sec": 0.0049,
-        "latency_p95_sec": 0.0072,
-        "latency_p99_sec": 0.0087,
-        "elapsed_sec": 20.13,
-        "rps": 9.94
+        "bytes_received": 135024,
+        "latency_avg_sec": 0.0082,
+        "latency_p95_sec": 0.0127,
+        "latency_p99_sec": 0.013,
+        "elapsed_sec": 20.197,
+        "rps": 9.9
       }
     },
     {
-      "timestamp": 1764918081.496213,
+      "timestamp": 1764942325.5875769,
       "iteration": 1,
       "scenario": "flap_recovery_tuned",
       "description": "Gentler flap: shorter blackout with heartbeat/retry emphasis.",
@@ -376,21 +376,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 176,
-        "timeout": 24,
+        "success": 178,
+        "timeout": 22,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 13000,
-        "bytes_received": 115456,
-        "latency_avg_sec": 0.0086,
-        "latency_p95_sec": 0.0118,
-        "latency_p99_sec": 0.0122,
-        "elapsed_sec": 20.191,
-        "rps": 9.91
+        "bytes_received": 138128,
+        "latency_avg_sec": 0.0081,
+        "latency_p95_sec": 0.0111,
+        "latency_p99_sec": 0.0118,
+        "elapsed_sec": 20.095,
+        "rps": 9.95
       }
     },
     {
-      "timestamp": 1764918091.755157,
+      "timestamp": 1764942335.9508708,
       "iteration": 1,
       "scenario": "mtu_variation_like",
       "description": "MTU variation approximation: smaller buffer + mild loss/jitter.",
@@ -419,21 +419,21 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 233,
-        "timeout": 7,
+        "success": 232,
+        "timeout": 8,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 15600,
-        "bytes_received": 152848,
-        "latency_avg_sec": 0.0269,
-        "latency_p95_sec": 0.0498,
-        "latency_p99_sec": 0.0531,
-        "elapsed_sec": 10.225,
-        "rps": 23.47
+        "bytes_received": 180032,
+        "latency_avg_sec": 0.0291,
+        "latency_p95_sec": 0.0505,
+        "latency_p99_sec": 0.0538,
+        "elapsed_sec": 10.339,
+        "rps": 23.21
       }
     },
     {
-      "timestamp": 1764918091.7980702,
+      "timestamp": 1764942336.001391,
       "iteration": 1,
       "scenario": "gz_large_body",
       "description": "10MB body via demo server to stress compression/streaming.",
@@ -467,16 +467,16 @@
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 390,
-        "bytes_received": 3936,
-        "latency_avg_sec": 0.0019,
-        "latency_p95_sec": 0.002,
-        "latency_p99_sec": 0.002,
-        "elapsed_sec": 0.039,
-        "rps": 152.94
+        "bytes_received": 4656,
+        "latency_avg_sec": 0.0032,
+        "latency_p95_sec": 0.0037,
+        "latency_p99_sec": 0.0037,
+        "elapsed_sec": 0.045,
+        "rps": 134.17
       }
     },
     {
-      "timestamp": 1764918104.4045727,
+      "timestamp": 1764942348.8339586,
       "iteration": 1,
       "scenario": "sw_fetch_3000_like",
       "description": "3000-fetch like load with mild loss/jitter.",
@@ -505,17 +505,17 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 2936,
-        "timeout": 64,
+        "success": 2942,
+        "timeout": 58,
         "error": 0,
         "exceptions": 0,
         "bytes_sent": 195000,
-        "bytes_received": 1926016,
-        "latency_avg_sec": 0.0585,
-        "latency_p95_sec": 0.0808,
-        "latency_p99_sec": 0.0904,
-        "elapsed_sec": 12.454,
-        "rps": 240.9
+        "bytes_received": 2282992,
+        "latency_avg_sec": 0.0612,
+        "latency_p95_sec": 0.0881,
+        "latency_p99_sec": 0.1063,
+        "elapsed_sec": 12.704,
+        "rps": 236.14
       }
     }
   ]
