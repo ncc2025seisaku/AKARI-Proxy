@@ -20,6 +20,8 @@ from typing import Iterable
 
 from udp_load_runner import build_parser as build_base_parser
 from udp_load_runner import run_load_test
+from datetime import datetime
+from collections import defaultdict
 
 
 @dataclass(frozen=True)
@@ -219,6 +221,11 @@ def build_suite_parser() -> argparse.ArgumentParser:
     parser.add_argument("--suite-summary", default="logs/disaster_suite_summary.json", help="Aggregated summary JSON (overwritten each run)")
     parser.add_argument("--event-log", default="logs/disaster_suite_events.jsonl", help="Append request-level events to this JSONL")
     parser.add_argument("--no-event-log", action="store_true", help="Disable per-request event logging")
+    parser.add_argument(
+        "--report",
+        default="logs/disaster_report.md",
+        help="Write a human-friendly Markdown report after the run (set empty to skip)",
+    )
     return parser
 
 
@@ -239,7 +246,114 @@ def build_run_args(args: argparse.Namespace, scenario: Scenario, event_log: Path
     run_args.summary_file = None
     run_args.log_context = {"scenario": scenario.key}
     run_args.scenario_key = scenario.key
+    # ユーザーが --demo-server / --no-demo-server を明示した場合はシナリオのデフォルトより優先
+    if args.demo_server is not None:
+        run_args.demo_server = args.demo_server
     return run_args
+
+
+def _latest_records_by_scenario(history_path: Path) -> dict[str, dict[str, object]]:
+    """Pick the latest record per scenario from history JSONL."""
+    latest: dict[str, dict[str, object]] = {}
+    if not history_path.exists():
+        return latest
+    for line in history_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = obj.get("scenario")
+        if not key:
+            continue
+        ts = obj.get("timestamp", 0)
+        if key not in latest or ts > latest[key].get("timestamp", 0):
+            latest[key] = obj
+    return latest
+
+
+def _format_ms(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    return f"{seconds * 1000:.1f} ms"
+
+
+def _status_emoji(success: int, timeout: int, error: int, requests: int) -> str:
+    if error > 0:
+        return "❌"
+    if timeout > 0:
+        return "⚠️"
+    if success == requests:
+        return "✅"
+    return "⚠️"
+
+
+def build_markdown_report(*, history_path: Path, run_started_at: float, run_finished_at: float) -> str:
+    latest = _latest_records_by_scenario(history_path)
+    if not latest:
+        return "# Disaster Suite レポート\n\n履歴がありません。"
+
+    scenarios = list(latest.keys())
+    scenarios.sort()
+
+    started = datetime.fromtimestamp(run_started_at).isoformat()
+    finished = datetime.fromtimestamp(run_finished_at).isoformat()
+
+    lines: list[str] = []
+    lines.append(f"# Disaster Suite レポート（最新実行）\n")
+    lines.append(f"- 実行開始: {started}")
+    lines.append(f"- 実行終了: {finished}")
+    sample = next(iter(latest.values()))
+    runtime = sample.get("runtime", {})
+    lines.append(f"- 接続先: {runtime.get('host', '?')}:{runtime.get('port', '?')} / protocol v{runtime.get('protocol_version', '?')}")
+    lines.append(f"- 実行シナリオ数: {len(scenarios)}")
+    lines.append("")
+
+    lines.append("## シナリオ別サマリ\n")
+    lines.append("| 状態 | シナリオ | 成功/総数 | 成功率 | タイムアウト | エラー | p95遅延 | RPS | 実行時間 |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+
+    worst_p95 = ("", 0.0)
+    most_timeout = ("", 0)
+
+    for key in scenarios:
+        rec = latest[key]
+        summary = rec.get("summary", {})
+        runtime = rec.get("runtime", {})
+        req = int(runtime.get("requests", summary.get("success", 0)))
+        success = int(summary.get("success", 0))
+        timeout = int(summary.get("timeout", 0))
+        error = int(summary.get("error", 0))
+        p95 = float(summary.get("latency_p95_sec", 0.0) or 0.0)
+        rps = float(summary.get("rps", 0.0) or 0.0)
+        elapsed = float(summary.get("elapsed_sec", 0.0) or 0.0)
+
+        success_rate = (success / req * 100) if req else 0.0
+        emoji = _status_emoji(success, timeout, error, req)
+        lines.append(
+            f"| {emoji} | {key} | {success}/{req} | {success_rate:.1f}% | {timeout} | {error} | {_format_ms(p95)} | {rps:.1f} | {elapsed:.3f}s |"
+        )
+
+        if p95 > worst_p95[1]:
+            worst_p95 = (key, p95)
+        if timeout > most_timeout[1]:
+            most_timeout = (key, timeout)
+
+    lines.append("")
+    lines.append("## ハイライト")
+    lines.append(f"- p95 が最も遅いシナリオ: **{worst_p95[0]}** ({worst_p95[1]*1000:.1f} ms)")
+    lines.append(f"- タイムアウトが最も多いシナリオ: **{most_timeout[0]}** ({most_timeout[1]} 件)")
+    lines.append("")
+
+    lines.append("## 見方")
+    lines.append("- ✅: 成功率100% かつエラーなし")
+    lines.append("- ⚠️: タイムアウトあり (エラー0)")
+    lines.append("- ❌: エラーあり")
+    lines.append("- p95遅延: 95%点の応答時間（ミリ秒）")
+    lines.append("- RPS: Requests per second（1秒あたり平均完了数）")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def extract_runtime(run_args: argparse.Namespace) -> dict[str, object]:
@@ -316,6 +430,16 @@ def main(argv: list[str] | None = None) -> None:
             ),
             encoding="utf-8",
         )
+
+    if args.report:
+        report_path = Path(args.report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_md = build_markdown_report(
+            history_path=Path(args.suite_log),
+            run_started_at=started_at,
+            run_finished_at=finished_at,
+        )
+        report_path.write_text(report_md, encoding="utf-8")
 
 
 if __name__ == "__main__":

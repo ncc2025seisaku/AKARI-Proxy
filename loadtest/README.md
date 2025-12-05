@@ -22,9 +22,8 @@ python loadtest/udp_load_runner.py --demo-server --requests 50 --concurrency 8 -
 ## Running against a remote proxy
 ```powershell
 python loadtest/udp_load_runner.py `
-  --host 203.0.113.10 `
-  --port 14500 `
-  --psk test-psk-0000-test `
+  --remote-config conf/remote.toml `  # host/port/psk/require_encryption を自動反映
+  --encrypt `                         # remote.toml に require_encryption=true がある場合は自動でオン
   --requests 200 `
   --concurrency 16 `
   --timeout 3.0 `
@@ -33,6 +32,7 @@ python loadtest/udp_load_runner.py `
   --log-file logs/loadtest.jsonl `
   --summary-file logs/loadtest_summary.json
 ```
+手動で指定する場合は `--host/--port/--psk[ --hex ] [--encrypt]` を使ってください。
 
 ## Important flags
 - `--loss-rate` / `--jitter` let you mimic packet loss and latency variance.
@@ -40,6 +40,8 @@ python loadtest/udp_load_runner.py `
 - `--protocol-version` lets you switch between protocol v1 and v2 (default).
 - `--url-file` can provide many URLs line by line; `--url` can be repeated.
 - `--demo-server` keeps traffic local; omit it when pointing to real proxies.
+- `--encrypt` sets the E flag (AKARI v2) for environments that enforce encryption.
+- `--remote-config` reads host/port/psk/require_encryption from `remote.toml` (env/file/plain PSK 読み込み対応)。
 
 ## Output
 The script prints a summary JSON to stdout. Example:
@@ -68,7 +70,19 @@ Use `disaster_suite.py` to execute a predefined set of harsh-network scenarios d
 ```powershell
 python loadtest/disaster_suite.py --demo-server --requests 200 --concurrency 16
 ```
+リモート実環境に当てたい場合はデモサーバを強制オフ:
+```powershell
+python loadtest/disaster_suite.py --remote-config conf/remote.toml --no-demo-server --requests 200 --concurrency 32
+```
+※ `remote.toml` の `host=0.0.0.0` / `::` はサーバーのバインド用です。クライアント接続先としては無効なので、自動で 127.0.0.1 を維持します。別ホストに当てたい場合は `--host <addr>` を明示してください。
+
+### Markdownレポート自動生成
+`--report logs/disaster_report.md`（デフォルト有効）で、最新実行分をまとめた人間向けレポートを生成します。
+- シナリオごとに ✅/⚠️/❌、成功率、タイムアウト数、p95遅延(ms)、RPS、実行時間を表形式で出力。
+- p95が最も遅いシナリオ、タイムアウト最多シナリオをハイライト。
+- 無効化したい場合は `--report ""` を指定。
 Key options for harsh cases:
 - `--flap-interval` / `--flap-duration`: drop all received packets during blackout windows (flap simulation).
 - `--buffer-size`: shrink receive buffer to approximate MTU variation.
 - `--demo-body-size` or `--demo-body-file`: feed large responses for decompression/transfer load.
+- `--demo-port 0` (default) lets Windows/Unix pick a free port for the in-process demo server to avoid address-in-use errors.

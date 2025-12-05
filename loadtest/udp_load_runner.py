@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import queue
 import random
 import socket
@@ -21,6 +22,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+
+try:  # Python 3.11+
+    import tomllib  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - fallback for <3.11
+    import tomli as tomllib  # type: ignore
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py"))
@@ -62,6 +68,12 @@ class LoadTestClient(AkariUdpClient):
         flap_duration: float = 0.0,
         **kwargs,
     ) -> None:
+        self._heartbeat_interval = float(kwargs.pop("heartbeat_interval", 0.0))
+        self._heartbeat_backoff = float(kwargs.pop("heartbeat_backoff", 1.5))
+        self._max_retries = int(kwargs.pop("max_retries", 0))
+        self._initial_retry_delay = float(kwargs.pop("initial_retry_delay", 0.0))
+        self._retry_jitter = float(kwargs.pop("retry_jitter", 0.0))
+
         super().__init__(*args, **kwargs)
         self._loss_rate = max(0.0, min(1.0, loss_rate))
         self._jitter = max(0.0, jitter)
@@ -79,8 +91,9 @@ class LoadTestClient(AkariUdpClient):
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
         if datagram is None:
+            flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
             if self._version >= 2:
-                datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, 0, self._psk)
+                datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
 
@@ -502,20 +515,85 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dual-send", action="store_true", help="Send each request twice with different message ids")
     parser.add_argument("--log-file", type=str, help="Append request-level JSON lines to this path")
     parser.add_argument("--summary-file", type=str, help="Write summary JSON to this path")
-    parser.add_argument("--demo-server", action="store_true", help="Start a local UDP responder to avoid real traffic")
+    parser.add_argument(
+        "--demo-server",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Start a local UDP responder to avoid real traffic (use --no-demo-server to force disable)",
+    )
     parser.add_argument("--demo-body", default="demo-response", help="Body text returned by the demo server")
     parser.add_argument("--demo-body-size", type=int, default=0, help="Generate a dummy body of this size (bytes) instead of --demo-body")
     parser.add_argument("--demo-body-file", type=str, help="Load response body from file path (binary)")
     parser.add_argument("--async-demo-server", action="store_true", default=True, help="Use asyncio-based demo UDP server (concurrent handling)")
+    parser.add_argument("--demo-host", default="127.0.0.1", help="Bind host for demo server (when --demo-server)")
+    parser.add_argument("--demo-port", type=int, default=0, help="Bind port for demo server (0 picks a free port)")
+    parser.add_argument(
+        "--encrypt",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Set E flag on requests (required when remote proxy enforces encryption)",
+    )
+    parser.add_argument(
+        "--remote-config",
+        help="Path to remote proxy config (remote.toml) to pull host/port/psk/require_encryption defaults from",
+    )
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     return parser
+
+
+def apply_remote_config(args: argparse.Namespace) -> None:
+    """Mutate args in-place using remote.toml defaults if provided."""
+
+    if not args.remote_config:
+        return
+
+    cfg_path = Path(args.remote_config)
+    data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    server = data.get("server", {}) if isinstance(data, dict) else {}
+
+    host = server.get("host")
+    port = server.get("port")
+    timeout = server.get("timeout")
+    buffer_size = server.get("buffer_size")
+    psk_hex = server.get("psk_hex")
+    require_encryption = server.get("require_encryption")
+
+    if host:
+        if str(host) in {"0.0.0.0", "::"}:
+            LOGGER.warning("remote-config host=%s is a wildcard; keeping current host=%s", host, args.host)
+        else:
+            args.host = host
+    if port:
+        args.port = int(port)
+    if timeout:
+        args.timeout = float(timeout)
+    if buffer_size:
+        args.buffer_size = int(buffer_size)
+    if psk_hex:
+        args.hex = True
+    if require_encryption and args.encrypt is None:
+        args.encrypt = True
+
+    # PSK precedence: env > file > plain
+    if env_key := server.get("psk_env"):
+        env_val = os.environ.get(env_key)
+        if env_val:
+            args.psk = env_val
+    if psk_file := server.get("psk_file"):
+        path = Path(psk_file)
+        if path.exists():
+            args.psk = path.read_text(encoding="utf-8").strip()
+    if psk_plain := server.get("psk"):
+        args.psk = psk_plain
 
 
 def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) -> dict[str, object]:
     if configure_logging:
         logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(levelname)s %(name)s: %(message)s")
 
+    apply_remote_config(args)
     psk = parse_psk(args.psk, hex_mode=args.hex)
+    encrypt_flag = bool(args.encrypt) if args.encrypt is not None else False
     urls = load_urls(args)
     log_context = getattr(args, "log_context", None)
     logger = LogWriter(Path(args.log_file), extra=log_context) if args.log_file else None
@@ -523,6 +601,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
     server: DemoServer | AsyncDemoServer | None = None
     target = (args.host, args.port)
     if args.demo_server:
+        # Use dedicated bind host/port for demo server to avoid clashing with real proxy ports.
+        bind_host = args.demo_host or "127.0.0.1"
+        bind_port = int(args.demo_port)
         if args.demo_body_file:
             body_bytes = Path(args.demo_body_file).read_bytes()
         elif args.demo_body_size and args.demo_body_size > 0:
@@ -532,9 +613,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
         else:
             body_bytes = args.demo_body.encode("utf-8")
         if args.async_demo_server:
-            server = AsyncDemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
+            server = AsyncDemoServer(bind_host, bind_port, psk, body=body_bytes, timeout=args.timeout)
         else:
-            server = DemoServer(args.host, args.port, psk, body=body_bytes, timeout=args.timeout)
+            server = DemoServer(bind_host, bind_port, psk, body=body_bytes, timeout=args.timeout)
         server.start()
         target = server.address
         LOGGER.info("demo server listening on %s:%s", *target)
@@ -559,6 +640,7 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             max_retries=args.max_retries,
             initial_retry_delay=args.initial_retry_delay,
             retry_jitter=args.retry_jitter,
+            use_encryption=encrypt_flag,
         )
         client._dual_send = args.dual_send  # opt-in dual send
         t = threading.Thread(
