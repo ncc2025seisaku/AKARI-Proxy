@@ -226,7 +226,7 @@ def fetch_udp_with_count(
         remote.psk,
         timeout=timeout_override if timeout_override is not None else remote.timeout,
         max_nack_rounds=None,  # 無制限に NACK を送って欠損を埋める
-        max_ack_rounds=3,
+        max_ack_rounds=0,  # ACKは送らず、欠損はNACKでのみ通知
         use_encryption=use_encryption,
         initial_request_retries=initial_request_retries,
     )

@@ -152,7 +152,7 @@ class AkariUdpClient:
         buffer_size: int = 65535,
         protocol_version: int = 2,
         max_nack_rounds: int | None = 3,
-        max_ack_rounds: int = 1,
+        max_ack_rounds: int = 0,
         use_encryption: bool = False,
         initial_request_retries: int = 1,
         sock_timeout: float = 1.0,
@@ -272,31 +272,20 @@ class AkariUdpClient:
             packet_type = parsed["type"]
             if packet_type == "resp":
                 accumulator.add_chunk(parsed)
-                if (
-                    self._version >= 2
-                    and acks_sent < self._max_ack_rounds
-                    and accumulator.seq_total is not None
-                ):
-                    missing = self._first_missing_seq(accumulator)
-                    if missing is not None:
-                        ack = encode_ack_v2_py(missing, message_id, timestamp, self._psk)
-                        sock.sendto(ack, self._remote_addr)
-                        bytes_sent += len(ack)
-                        acks_sent += 1
-                        LOGGER.debug(
-                            "send ACK message_id=%s first_missing=%s acks_sent=%d",
-                            message_id,
-                            missing,
-                            acks_sent,
-                        )
+                seq_total = accumulator.seq_total
+                seq = payload.get("seq")
                 if accumulator.complete:
                     break
+
+                # 欠損があり、かつ最後のチャンク（seq_total-1）を受信したタイミングでのみNACKを再送
                 allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                 if (
                     self._version >= 2
                     and allow_nack
-                    and accumulator.seq_total is not None
-                    and payload.get("seq") is not None
+                    and seq_total is not None
+                    and seq is not None
+                    and seq_total > 0
+                    and seq == seq_total - 1
                 ):
                     missing_bitmap = self._build_missing_bitmap(accumulator)
                     if missing_bitmap:
@@ -305,7 +294,7 @@ class AkariUdpClient:
                         bytes_sent += len(nack)
                         nacks_sent += 1
                         LOGGER.debug(
-                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d (after tail chunk)",
                             message_id,
                             len(missing_bitmap),
                             nacks_sent,
