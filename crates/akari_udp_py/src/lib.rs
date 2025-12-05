@@ -328,7 +328,16 @@ mod tests {
     fn python_encode_decode_round_trip_v2() {
         Python::with_gil(|py| {
             let hdr = b"\x01\x03abc";
-            let datagram = encode_request_v2_py(py, "get", "https://example.xyz", hdr, 0x1234_5678, 0x5f3759df, 0x40, PSK)
+            let datagram = encode_request_v2_py(
+                py,
+                PyString::new(py, "get"),
+                "https://example.xyz",
+                hdr,
+                0x1234_5678,
+                0x5f3759df,
+                0x40,
+                PSK,
+            )
                 .expect("encode");
             let dict = decode_packet_py(py, datagram.as_bytes(py), PSK).expect("decode");
             let payload_any = dict.get_item("payload").unwrap().unwrap();
