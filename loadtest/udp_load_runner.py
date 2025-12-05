@@ -66,6 +66,7 @@ class LoadTestClient(AkariUdpClient):
         jitter: float = 0.0,
         flap_interval: float = 0.0,
         flap_duration: float = 0.0,
+        initial_request_retries: int = 1,
         **kwargs,
     ) -> None:
         self._heartbeat_interval = float(kwargs.pop("heartbeat_interval", 0.0))
@@ -81,6 +82,7 @@ class LoadTestClient(AkariUdpClient):
         self._flap_interval = max(0.0, flap_interval)
         self._flap_duration = max(0.0, flap_duration)
         self._started_at = time.monotonic()
+        self._initial_request_retries = max(0, int(initial_request_retries))
         # 最初のレスポンスは欠損させずに通すためのガード
         self._skip_first_drop = True
 
@@ -100,109 +102,120 @@ class LoadTestClient(AkariUdpClient):
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
 
         packets: list[Mapping[str, object]] = []
-        accumulator = ResponseAccumulator(message_id)
         error_payload: Mapping[str, object] | None = None
-        timed_out = False
-        bytes_sent = len(datagram)
-        bytes_received = 0
+        bytes_sent_total = 0
+        bytes_received_total = 0
+        final_outcome: ResponseOutcome | None = None
 
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(self._timeout)
-            sock.sendto(datagram, self._remote_addr)
-            last_received = time.monotonic()
+        for attempt in range(self._initial_request_retries + 1):
+            accumulator = ResponseAccumulator(message_id)
+            timed_out = False
+            bytes_sent = len(datagram)
+            bytes_received = 0
             nack_sent = 0
             last_nack_sent_at: float | None = None
-            retries = 0
-            heartbeat_interval = self._heartbeat_interval
-            next_probe = (
-                last_received + heartbeat_interval if heartbeat_interval > 0 and self._max_retries > 0 else None
-            )
-            retry_delay = self._initial_retry_delay if self._initial_retry_delay > 0 else heartbeat_interval
+            self._skip_first_drop = True  # reset per attempt
 
-            while True:
-                if next_probe is not None and time.monotonic() >= next_probe and retries < self._max_retries:
-                    sock.sendto(datagram, self._remote_addr)
-                    retries += 1
-                    retry_delay = retry_delay * self._heartbeat_backoff if retry_delay else heartbeat_interval
-                    jitter = random.random() * self._retry_jitter if self._retry_jitter else 0.0
-                    next_probe = time.monotonic() + max(retry_delay, heartbeat_interval) + jitter
-
-                remaining = self._timeout - (time.monotonic() - last_received)
-                if remaining <= 0:
-                    timed_out = True
-                    break
-                sock.settimeout(max(min(0.5, remaining), 0.05))
-                try:
-                    data, _ = sock.recvfrom(self._buffer_size)
-                except socket.timeout:
-                    # Still within overall timeout; keep waiting for late chunks.
-                    continue
-
-                if not self._skip_first_drop:
-                    if self._flap_interval and self._flap_duration:
-                        if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
-                            LOGGER.debug("drop packet by flap window message_id=%s", message_id)
-                            continue
-
-                    if self._loss_rate and random.random() < self._loss_rate:
-                        LOGGER.debug("drop packet message_id=%s", message_id)
-                        continue
-                else:
-                    self._skip_first_drop = False
-                bytes_received += len(data)
-                if self._jitter:
-                    time.sleep(random.uniform(0, self._jitter))
-
-                parsed = decode_packet_py(data, self._psk)
-                packets.append(normalize_object(parsed))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.settimeout(self._timeout)
+                sock.sendto(datagram, self._remote_addr)
                 last_received = time.monotonic()
-                payload = parsed.get("payload", {})
-                chunk = payload.get("chunk")
-                chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
-                LOGGER.debug(
-                    "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
-                    parsed.get("type"),
-                    parsed.get("header", {}).get("message_id"),
-                    payload.get("seq"),
-                    payload.get("seq_total"),
-                    chunk_len,
-                )
 
-                packet_type = parsed["type"]
-                if packet_type == "resp":
-                    accumulator.add_chunk(parsed)
-                    if accumulator.complete:
+                while True:
+                    remaining = self._timeout - (time.monotonic() - last_received)
+                    if remaining <= 0:
+                        timed_out = True
                         break
-                    if (
-                        self._version >= 2
-                        and accumulator.seq_total is not None
-                        and payload.get("seq") is not None
-                        and nack_sent < self._max_nack_rounds
-                    ):
-                        missing_bitmap = self._build_missing_bitmap(accumulator)
-                        if missing_bitmap:
-                            if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL:
-                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                                sock.sendto(nack, self._remote_addr)
-                                nack_sent += 1
-                                last_nack_sent_at = time.monotonic()
-                elif packet_type == "error":
-                    error_payload = parsed["payload"]
-                    break
+                    sock.settimeout(max(min(0.5, remaining), 0.05))
+                    try:
+                        data, _ = sock.recvfrom(self._buffer_size)
+                    except socket.timeout:
+                        continue
 
-        body = accumulator.assembled_body() if accumulator.complete else None
-        return ResponseOutcome(
-            message_id=message_id,
-            packets=packets,
-            body=body,
-            status_code=accumulator.status_code,
-            headers=accumulator.headers,
-            error=error_payload,
-            complete=accumulator.complete,
-            timed_out=timed_out,
-            bytes_sent=bytes_sent,
-            bytes_received=bytes_received,
-        )
+                    if not self._skip_first_drop:
+                        if self._flap_interval and self._flap_duration:
+                            if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
+                                LOGGER.debug("drop packet by flap window message_id=%s", message_id)
+                                continue
+
+                        if self._loss_rate and random.random() < self._loss_rate:
+                            LOGGER.debug("drop packet message_id=%s", message_id)
+                            continue
+                    else:
+                        self._skip_first_drop = False
+
+                    bytes_received += len(data)
+                    if self._jitter:
+                        time.sleep(random.uniform(0, self._jitter))
+
+                    parsed = decode_packet_py(data, self._psk)
+                    packets.append(normalize_object(parsed))
+                    last_received = time.monotonic()
+                    payload = parsed.get("payload", {})
+                    chunk = payload.get("chunk")
+                    chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
+                    LOGGER.debug(
+                        "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB attempt=%s",
+                        parsed.get("type"),
+                        parsed.get("header", {}).get("message_id"),
+                        payload.get("seq"),
+                        payload.get("seq_total"),
+                        chunk_len,
+                        attempt,
+                    )
+
+                    packet_type = parsed["type"]
+                    if packet_type == "resp":
+                        accumulator.add_chunk(parsed)
+                        if accumulator.complete:
+                            timed_out = False
+                            break
+                        if (
+                            self._version >= 2
+                            and accumulator.seq_total is not None
+                            and payload.get("seq") is not None
+                            and nack_sent < self._max_nack_rounds
+                        ):
+                            missing_bitmap = self._build_missing_bitmap(accumulator)
+                            if missing_bitmap:
+                                if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL:
+                                    nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                    sock.sendto(nack, self._remote_addr)
+                                    nack_sent += 1
+                                    last_nack_sent_at = time.monotonic()
+                    elif packet_type == "error":
+                        error_payload = parsed["payload"]
+                        timed_out = False
+                        break
+
+            bytes_sent_total += bytes_sent
+            bytes_received_total += bytes_received
+
+            body = accumulator.assembled_body() if accumulator.complete else None
+            final_outcome = ResponseOutcome(
+                message_id=message_id,
+                packets=packets,
+                body=body,
+                status_code=accumulator.status_code,
+                headers=accumulator.headers,
+                error=error_payload,
+                complete=accumulator.complete,
+                timed_out=timed_out,
+                bytes_sent=bytes_sent_total,
+                bytes_received=bytes_received_total,
+            )
+
+            if not timed_out:
+                break
+
+            LOGGER.warning(
+                "request timeout; retrying message_id=%s attempt=%s/%s",
+                message_id,
+                attempt + 1,
+                self._initial_request_retries + 1,
+            )
+
+        return final_outcome  # type: ignore[return-value]
 
 
 @dataclass
@@ -506,6 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--flap-duration", type=float, default=0.0, help="Simulate flap: duration seconds to drop packets each interval")
     parser.add_argument("--delay", type=float, default=0.0, help="Sleep after each request (seconds)")
     parser.add_argument("--max-nack-rounds", type=int, default=3, help="How many times to send NACK when missing chunks")
+    parser.add_argument("--initial-request-retries", type=int, default=1, help="How many full-request retries after initial timeout (default 1)")
     parser.add_argument("--buffer-size", type=int, default=65535, help="Socket recv buffer size")
     parser.add_argument("--heartbeat-interval", type=float, default=0.0, help="Send lightweight re-probe after this idle time (seconds) (default 0: disabled)")
     parser.add_argument("--heartbeat-backoff", type=float, default=1.5, help="Backoff multiplier for heartbeat retries")
@@ -562,6 +576,8 @@ def apply_remote_config(args: argparse.Namespace) -> None:
     buffer_size = server.get("buffer_size")
     psk_hex = server.get("psk_hex")
     require_encryption = server.get("require_encryption")
+    initial_request_retries = server.get("initial_request_retries")
+    max_nack_rounds = server.get("max_nack_rounds")
 
     if host:
         if str(host) in {"0.0.0.0", "::"}:
@@ -574,6 +590,10 @@ def apply_remote_config(args: argparse.Namespace) -> None:
         args.timeout = float(timeout)
     if buffer_size:
         args.buffer_size = int(buffer_size)
+    if initial_request_retries is not None:
+        args.initial_request_retries = int(initial_request_retries)
+    if max_nack_rounds is not None:
+        args.max_nack_rounds = int(max_nack_rounds)
     if psk_hex:
         args.hex = True
     if require_encryption and args.encrypt is None:
@@ -637,6 +657,7 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
             jitter=args.jitter,
             flap_interval=args.flap_interval,
             flap_duration=args.flap_duration,
+            initial_request_retries=args.initial_request_retries,
             protocol_version=args.protocol_version,
             max_nack_rounds=args.max_nack_rounds,
             buffer_size=args.buffer_size,
