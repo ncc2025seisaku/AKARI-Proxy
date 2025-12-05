@@ -3,11 +3,14 @@
 `docs/AKARI.md` と `docs/architecture.md` で記載された「外部プロキシが
 HTTPクライアントとしてWebサイトへアクセスし、レスポンスを取得する」責務の
 うち、URL取得部分だけを初心者でもすぐ使えるように切り出している。
+
+同期版(fetch)と非同期版(fetch_async)の双方を提供する。
 """
 
 from __future__ import annotations
 
 import socket
+import asyncio
 from typing import TypedDict
 from urllib import error, parse, request
 
@@ -109,3 +112,59 @@ def fetch(
         if isinstance(reason, socket.timeout):
             raise TimeoutFetchError(timeout) from exc
         raise FetchError(str(reason)) from exc
+
+
+async def fetch_async(
+    url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+    max_bytes: int = MAX_BODY_BYTES,
+    session=None,
+    ) -> HttpResponse:
+    """非同期版 GET 取得。aiohttp を使用する。"""
+
+    try:
+        import aiohttp  # type: ignore
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError("aiohttp がインストールされていません") from exc
+
+    normalized_url = _normalize_url(url)
+    timeout_cfg = aiohttp.ClientTimeout(total=timeout, sock_read=timeout, sock_connect=timeout)
+
+    async def _do(session_obj: "aiohttp.ClientSession") -> HttpResponse:
+        try:
+            async with session_obj.get(
+                normalized_url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept-Encoding": ACCEPT_ENCODING,
+                },
+                allow_redirects=True,
+                compress=False,  # 明示的に圧縮解除をさせない（raw転送）
+            ) as resp:
+                body_parts: list[bytes] = []
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    body_parts.append(chunk)
+                    if sum(len(c) for c in body_parts) > max_bytes:
+                        raise BodyTooLargeError(max_bytes)
+                body = b"".join(body_parts)
+                headers = {k: v for k, v in resp.headers.items()}
+                return {
+                    "status_code": resp.status,
+                    "headers": headers,
+                    "body": body,
+                }
+        except asyncio.TimeoutError as exc:
+            raise TimeoutFetchError(timeout) from exc
+        except aiohttp.InvalidURL as exc:
+            raise InvalidURLError(str(exc)) from exc
+        except aiohttp.ClientResponseError as exc:
+            raise FetchError(f"HTTPエラー {exc.status}: {exc.message}") from exc
+        except aiohttp.ClientError as exc:
+            raise FetchError(str(exc)) from exc
+
+    if session is not None:
+        return await _do(session)
+
+    async with aiohttp.ClientSession(timeout=timeout_cfg, auto_decompress=False) as owned_session:
+        return await _do(owned_session)

@@ -9,72 +9,115 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
+import os
+import socket
+import sys
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, Sequence, Callable
+from typing import Iterable, Sequence, Callable, Awaitable
 
 from akari_udp_py import decode_packet_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
-from .handler import handle_request, set_require_encryption
+from .handler import handle_request_async, set_require_encryption, set_fetch_async_func
+from .http_client import fetch_async, DEFAULT_TIMEOUT
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "conf" / "remote.toml"
+DEFAULT_SESSION_POOL_SIZE = 8
+DEFAULT_RCVBUF = 1_048_576  # 1MB
 
 
-class RemoteProxyProtocol(asyncio.DatagramProtocol):
-    def __init__(self, psk: bytes, handler: Callable[[IncomingRequest], Sequence[bytes]], loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor):
-        self.psk = psk
-        self.handler = handler
-        self.loop = loop
-        self.executor = executor
-        self.transport: asyncio.DatagramTransport | None = None
+class DisposableSessionPool:
+    """使い捨て aiohttp.ClientSession を事前生成して待機させる簡易プール。"""
 
-    def connection_made(self, transport: asyncio.BaseTransport) -> None:
-        self.transport = transport  # type: ignore[assignment]
-        sockname = transport.get_extra_info("sockname")
-        LOGGER.info("AKARI async remote proxy listening on %s", sockname)
+    def __init__(self, *, size: int, timeout: float, logger: logging.Logger) -> None:
+        self.size = max(1, size)
+        self.timeout = timeout
+        self.logger = logger
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._closed = False
 
-    def datagram_received(self, data: bytes, addr) -> None:
-        # fire-and-forgetタスクで処理（送信も含む）
-        self.loop.create_task(self._process_datagram(data, addr))
+    async def start(self) -> None:
+        for _ in range(self.size):
+            await self._enqueue_new()
 
-    async def _process_datagram(self, data: bytes, addr) -> None:
-        try:
-            parsed = await self.loop.run_in_executor(self.executor, decode_packet_py, data, self.psk)
-        except ValueError as exc:
-            message = str(exc) or exc.__class__.__name__
-            if message in {"HMAC mismatch", "invalid PSK"}:
-                LOGGER.warning("discard packet from %s: %s (PSK mismatch?)", addr, message)
-            else:
-                LOGGER.warning("discard packet from %s: %s", addr, message)
+    async def _enqueue_new(self) -> None:
+        if self._closed:
             return
-        except Exception:
-            LOGGER.exception("unexpected error while processing datagram from %s", addr)
-            return
-
         try:
-            request = IncomingRequest(
-                header=parsed["header"],
-                payload=parsed["payload"],
-                packet_type=parsed["type"],
-                addr=addr,
-                parsed=parsed,
-                datagram=data,
-                psk=self.psk,
-            )
-            datagrams = await self.loop.run_in_executor(self.executor, self.handler, request)
-            if not self.transport:
-                return
-            for dg in datagrams:
-                try:
-                    self.transport.sendto(bytes(dg), addr)
-                except Exception:
-                    LOGGER.exception("failed to send datagram to %s", addr)
-        except Exception:
-            LOGGER.exception("unexpected error while processing datagram from %s", addr)
+            import aiohttp  # type: ignore
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("aiohttp がインストールされていません") from exc
+
+        timeout_cfg = aiohttp.ClientTimeout(total=self.timeout, sock_read=self.timeout, sock_connect=self.timeout)
+        session = aiohttp.ClientSession(timeout=timeout_cfg, auto_decompress=False)
+        await self._queue.put(session)
+
+    async def acquire(self):
+        if self._closed:
+            raise RuntimeError("session pool is closed")
+        return await self._queue.get()
+
+    async def recycle(self, session) -> None:
+        try:
+            await session.close()
+        finally:
+            await self._enqueue_new()
+
+    async def close(self) -> None:
+        self._closed = True
+        while not self._queue.empty():
+            session = self._queue.get_nowait()
+            try:
+                await session.close()
+            except Exception:
+                self.logger.warning("failed to close aiohttp session", exc_info=True)
+
+
+async def _process_datagram(
+    data: bytes,
+    addr,
+    *,
+    psk: bytes,
+    handler: Callable[[IncomingRequest], Awaitable[Sequence[bytes]]],
+) -> Sequence[bytes] | None:
+    try:
+        parsed = decode_packet_py(data, psk)
+    except ValueError as exc:
+        message = str(exc) or exc.__class__.__name__
+        if message in {"HMAC mismatch", "invalid PSK"}:
+            LOGGER.warning("discard packet from %s: %s (PSK mismatch?)", addr, message)
+        else:
+            LOGGER.warning("discard packet from %s: %s", addr, message)
+        return None
+    except Exception:
+        LOGGER.exception("unexpected error while processing datagram from %s", addr)
+        return None
+
+    try:
+        request = IncomingRequest(
+            header=parsed["header"],
+            payload=parsed["payload"],
+            packet_type=parsed["type"],
+            addr=addr,
+            parsed=parsed,
+            datagram=data,
+            psk=psk,
+        )
+        LOGGER.debug(
+            "decoded packet type=%s msg=%s ver=%s from=%s",
+            parsed.get("type"),
+            request.header.get("message_id"),
+            request.header.get("version"),
+            addr,
+        )
+        return await handler(request)
+    except Exception:
+        LOGGER.exception("unexpected error while processing datagram from %s", addr)
+        return None
 
 
 async def serve_remote_proxy_async(
@@ -82,26 +125,85 @@ async def serve_remote_proxy_async(
     port: int,
     *,
     psk: bytes,
+    buffer_size: int = DEFAULT_RCVBUF,
+    session_pool_size: int = DEFAULT_SESSION_POOL_SIZE,
     logger: logging.Logger | None = None,
-    workers: int | None = None,
+    request_timeout: float | None = None,
 ) -> None:
     """asyncio版のリモートプロキシを起動する。"""
 
     logger = logger or LOGGER
     loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=workers)
 
-    transport, _protocol = await loop.create_datagram_endpoint(
-        lambda: RemoteProxyProtocol(psk, handle_request, loop, executor),
-        local_addr=(host, port),
-        allow_broadcast=False,
-    )
+    timeout_value = request_timeout or DEFAULT_TIMEOUT
+
+    session_pool = DisposableSessionPool(size=session_pool_size, timeout=timeout_value, logger=logger)
+    await session_pool.start()
+
+    # Windows 環境で ICMP Port Unreachable を受け取った際に ConnectionResetError で
+    # トランスポートが閉じないよう無効化する。
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((host, port))
+    sock.setblocking(True)  # 同期受信で ConnectionResetError を握り潰す
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffer_size)
+        actual_rcvbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+        logger.info("UDP SO_RCVBUF set to %s bytes", actual_rcvbuf)
+    except OSError:
+        logger.warning("could not set SO_RCVBUF to %s", buffer_size)
+    if os.name == "nt":
+        SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
+        try:
+            sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
+        except (OSError, ValueError):
+            logger.warning("could not disable UDP connreset (Windows); continuing")
+
+    async def pooled_fetch_async(url: str):
+        session = await session_pool.acquire()
+        try:
+            return await fetch_async(url, timeout=timeout_value, session=session)
+        finally:
+            await session_pool.recycle(session)
+
+    set_fetch_async_func(pooled_fetch_async)
+
+    async def handle_and_send(data: bytes, addr) -> None:
+        datagrams = await _process_datagram(data, addr, psk=psk, handler=handle_request_async)
+        if not datagrams:
+            return
+        for dg in datagrams:
+            try:
+                LOGGER.debug("send datagram len=%d to %s", len(dg), addr)
+                sock.sendto(bytes(dg), addr)
+            except Exception:
+                LOGGER.exception("failed to send datagram to %s", addr)
+
+    async def recv_loop() -> None:
+        while True:
+            try:
+                data, addr = await loop.run_in_executor(None, sock.recvfrom, buffer_size)
+            except ConnectionResetError:
+                LOGGER.debug("recvfrom ConnectionResetError (ignored)")
+                continue
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                LOGGER.exception("recvfrom failed")
+                await asyncio.sleep(0.1)
+                continue
+            LOGGER.debug("recv datagram len=%d from %s", len(data), addr)
+            loop.create_task(handle_and_send(data, addr))
+
+    recv_task = asyncio.create_task(recv_loop())
 
     try:
         await asyncio.Future()  # run forever
     finally:
-        transport.close()
-        executor.shutdown(wait=False)
+        recv_task.cancel()
+        with contextlib.suppress(Exception):
+            await recv_task
+        sock.close()
+        await session_pool.close()
         logger.info("async remote proxy stopped")
 
 
@@ -118,7 +220,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         default=str(DEFAULT_CONFIG),
         help="Path to remote proxy configuration (default: conf/remote.toml)",
     )
-    parser.add_argument("--workers", type=int, help="ThreadPool max workers for handler/fetch (default: Python executor default)")
+    parser.add_argument("--workers", type=int, default=None, help="(unused, kept for compatibility)")
     parser.add_argument("--log-level", help="override logging level (default: config.log_level)")
     args = parser.parse_args(argv)
 
@@ -137,8 +239,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             config.host,
             config.port,
             psk=config.psk,
+            buffer_size=config.buffer_size,
+            session_pool_size=DEFAULT_SESSION_POOL_SIZE,
+            request_timeout=config.timeout or DEFAULT_TIMEOUT,
             # enforce encryption based on config
-            workers=args.workers,
             logger=logging.getLogger("akari.remote_proxy.async_server"),
         )
     )
