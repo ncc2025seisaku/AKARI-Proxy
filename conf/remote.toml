@@ -4,8 +4,8 @@
 [server]
 host = "0.0.0.0"
 port = 9000
-timeout = 10.0
-buffer_size = 65535
+timeout = 20.0
+buffer_size = 1048576
 log_level = "INFO"
 # E フラグが無いリクエストを拒否したい場合は true にする
 require_encryption = true

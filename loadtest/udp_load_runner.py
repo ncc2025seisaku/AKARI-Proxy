@@ -38,6 +38,7 @@ from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py,
 
 LOGGER = logging.getLogger("akari.loadtest")
 NACK_MIN_INTERVAL = 0.05  # seconds; avoid NACK連打
+PROGRESS_WIDTH = 30
 
 
 def parse_psk(value: str, *, hex_mode: bool) -> bytes:
@@ -132,6 +133,20 @@ class LoadTestClient(AkariUdpClient):
                     try:
                         data, _ = sock.recvfrom(self._buffer_size)
                     except socket.timeout:
+                        # Mirror local proxy behavior: on idle + missing chunks, send NACK
+                        allow_nack = nack_sent < self._max_nack_rounds
+                        if (
+                            self._version >= 2
+                            and allow_nack
+                            and accumulator.seq_total is not None
+                            and not accumulator.complete
+                        ):
+                            missing_bitmap = self._build_missing_bitmap(accumulator)
+                            if missing_bitmap and (last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL):
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nack_sent += 1
+                                last_nack_sent_at = time.monotonic()
                         continue
 
                     if not self._skip_first_drop:
@@ -169,22 +184,28 @@ class LoadTestClient(AkariUdpClient):
                     packet_type = parsed["type"]
                     if packet_type == "resp":
                         accumulator.add_chunk(parsed)
+                        seq_total = accumulator.seq_total
+                        seq = payload.get("seq")
                         if accumulator.complete:
                             timed_out = False
                             break
+
+                        # Align with local proxy: send NACK only after tail chunk if gaps remain
+                        allow_nack = nack_sent < self._max_nack_rounds
                         if (
                             self._version >= 2
-                            and accumulator.seq_total is not None
-                            and payload.get("seq") is not None
-                            and nack_sent < self._max_nack_rounds
+                            and allow_nack
+                            and seq_total is not None
+                            and seq is not None
+                            and seq_total > 0
+                            and seq == seq_total - 1
                         ):
                             missing_bitmap = self._build_missing_bitmap(accumulator)
-                            if missing_bitmap:
-                                if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL:
-                                    nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                                    sock.sendto(nack, self._remote_addr)
-                                    nack_sent += 1
-                                    last_nack_sent_at = time.monotonic()
+                            if missing_bitmap and (last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL):
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nack_sent += 1
+                                last_nack_sent_at = time.monotonic()
                     elif packet_type == "error":
                         error_payload = parsed["payload"]
                         timed_out = False
@@ -436,6 +457,19 @@ def summarize(counters: Counters, elapsed: float, total_requests: int) -> dict[s
         "rps": round(total_requests / elapsed, 2) if elapsed else total_requests,
     }
 
+def _render_progress(done: int, total: int, started_at: float, label: str) -> None:
+    pct = done / total if total else 0.0
+    filled = int(PROGRESS_WIDTH * pct)
+    bar = "█" * filled + "░" * (PROGRESS_WIDTH - filled)
+    elapsed = time.time() - started_at
+    eta = (elapsed / done * (total - done)) if done else 0.0
+    msg = (
+        f"\r[{bar}] {done:4}/{total:4} {pct*100:5.1f}% | {label:<18} | "
+        f"経過 {elapsed:6.1f}s / 残り {eta:6.1f}s"
+    )
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+
 
 def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]]":
     q: "queue.Queue[tuple[int, str]]" = queue.Queue()
@@ -577,14 +611,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def apply_remote_config(args: argparse.Namespace) -> None:
-    """Mutate args in-place using remote.toml defaults if provided."""
+    """Mutate args in-place using remote.toml / web_proxy.toml defaults if provided."""
 
     if not args.remote_config:
         return
 
     cfg_path = Path(args.remote_config)
     data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    server = data.get("server", {}) if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return
+
+    # remote.toml -> [server], web_proxy.toml -> [remote]
+    server = data.get("server") or data.get("remote") or {}
+    if not isinstance(server, dict):
+        return
 
     host = server.get("host")
     port = server.get("port")
@@ -663,6 +703,26 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
 
     tasks = build_tasks(args.requests, urls)
     agg = Aggregator()
+    start_ts = time.perf_counter()
+    progress_stop = threading.Event()
+
+    def progress_worker() -> None:
+        label = getattr(args, "progress_label", "") or "running"
+        total = args.requests
+        while not progress_stop.is_set():
+            snap = agg.snapshot()
+            done = snap.success + snap.timeout + snap.error + snap.exceptions
+            _render_progress(done, total, start_ts, label)
+            time.sleep(0.3)
+        # final paint
+        snap = agg.snapshot()
+        done = snap.success + snap.timeout + snap.error + snap.exceptions
+        _render_progress(done, total, start_ts, label)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    progress_thread = threading.Thread(target=progress_worker, daemon=True)
+    progress_thread.start()
     workers = []
     for i in range(args.concurrency):
         client = LoadTestClient(
@@ -697,6 +757,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
     for t in workers:
         t.join()
     elapsed = time.perf_counter() - start
+
+    progress_stop.set()
+    progress_thread.join()
 
     if server:
         server.stop()

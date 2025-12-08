@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -279,6 +280,22 @@ def _format_ms(seconds: float | None) -> str:
     return f"{seconds * 1000:.1f} ms"
 
 
+def _render_progress(done: int, total: int, started_at: float, label: str) -> None:
+    """依存なしの簡易プログレスバーを描画。"""
+    width = 26
+    pct = done / total if total else 0.0
+    filled = int(width * pct)
+    bar = "█" * filled + "░" * (width - filled)
+    elapsed = time.time() - started_at
+    eta = (elapsed / done * (total - done)) if done else 0.0
+    msg = (
+        f"\r[{bar}] {done:02}/{total:02} {pct*100:5.1f}% "
+        f"| {label:<24} | 経過 {elapsed:6.1f}s / 残り {eta:6.1f}s"
+    )
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+
+
 def _status_emoji(success: int, timeout: int, error: int, requests: int) -> str:
     if error > 0:
         return "❌"
@@ -407,10 +424,15 @@ def main(argv: list[str] | None = None) -> None:
     selected = select_scenarios(args.scenarios)
     all_records: list[dict[str, object]] = []
     started_at = time.time()
+    total_runs = len(selected) * args.repeat
+    done_runs = 0
 
     for iteration in range(args.repeat):
         for scenario in selected:
+            _render_progress(done_runs, total_runs, started_at, f"start {scenario.key}")
             run_args = build_run_args(args, scenario, event_log_path)
+            # per-scenario進捗用ラベルを渡す
+            run_args.progress_label = f"{scenario.key}"
             logging.info("Running scenario=%s iteration=%s", scenario.key, iteration + 1)
             summary = run_load_test(run_args)
             record = {
@@ -430,8 +452,13 @@ def main(argv: list[str] | None = None) -> None:
                 summary.get("timeout"),
                 summary.get("error"),
             )
+            done_runs += 1
+            _render_progress(done_runs, total_runs, started_at, f"done  {scenario.key}")
 
     finished_at = time.time()
+    if total_runs:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
     if suite_summary_path:
         suite_summary_path.parent.mkdir(parents=True, exist_ok=True)
         suite_summary_path.write_text(
