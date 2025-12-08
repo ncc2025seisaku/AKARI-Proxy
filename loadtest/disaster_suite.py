@@ -287,11 +287,7 @@ def _render_progress(done: int, total: int, started_at: float, label: str) -> No
     filled = int(width * pct)
     bar = "█" * filled + "░" * (width - filled)
     elapsed = time.time() - started_at
-    eta = (elapsed / done * (total - done)) if done else 0.0
-    msg = (
-        f"\r[{bar}] {done:02}/{total:02} {pct*100:5.1f}% "
-        f"| {label:<24} | 経過 {elapsed:6.1f}s / 残り {eta:6.1f}s"
-    )
+    msg = f"\r[{bar}] {done:02}/{total:02} {pct*100:5.1f}% | {label:<24}"
     sys.stdout.write(msg)
     sys.stdout.flush()
 

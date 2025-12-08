@@ -458,17 +458,17 @@ def summarize(counters: Counters, elapsed: float, total_requests: int) -> dict[s
     }
 
 def _render_progress(done: int, total: int, started_at: float, label: str) -> None:
+    # 端末でない場合は描画しない
+    if not sys.stderr.isatty():
+        return
     pct = done / total if total else 0.0
     filled = int(PROGRESS_WIDTH * pct)
     bar = "█" * filled + "░" * (PROGRESS_WIDTH - filled)
     elapsed = time.time() - started_at
     eta = (elapsed / done * (total - done)) if done else 0.0
-    msg = (
-        f"\r[{bar}] {done:4}/{total:4} {pct*100:5.1f}% | {label:<18} | "
-        f"経過 {elapsed:6.1f}s / 残り {eta:6.1f}s"
-    )
-    sys.stdout.write(msg)
-    sys.stdout.flush()
+    msg = f"\r\033[2K[{bar}] {done:4}/{total:4} {pct*100:5.1f}% | {label:<18}"
+    sys.stderr.write(msg)
+    sys.stderr.flush()
 
 
 def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]]":
@@ -711,15 +711,32 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
         total = args.requests
         while not progress_stop.is_set():
             snap = agg.snapshot()
-            done = snap.success + snap.timeout + snap.error + snap.exceptions
-            _render_progress(done, total, start_ts, label)
-            time.sleep(0.3)
+            raw_done = snap.success + snap.timeout + snap.error + snap.exceptions
+            done = min(total, raw_done)
+            pending = max(tasks.qsize(), 0)
+            inflight = max(total - pending - done, 0)
+            extra = (
+                f" pend {pending:4} infl {inflight:4}"
+                f" | suc {snap.success:4} to {snap.timeout:4} err {snap.error:4}"
+                f" | nack {snap.nacks_sent:4} retry {snap.request_retries:4}"
+            )
+            _render_progress(done, total, start_ts, f"{label} {extra}")
+            time.sleep(0.5)
         # final paint
         snap = agg.snapshot()
-        done = snap.success + snap.timeout + snap.error + snap.exceptions
-        _render_progress(done, total, start_ts, label)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        raw_done = snap.success + snap.timeout + snap.error + snap.exceptions
+        done = min(total, raw_done)
+        pending = max(tasks.qsize(), 0)
+        inflight = max(total - pending - done, 0)
+        extra = (
+            f" pend {pending:4} infl {inflight:4}"
+            f" | suc {snap.success:4} to {snap.timeout:4} err {snap.error:4}"
+            f" | nack {snap.nacks_sent:4} retry {snap.request_retries:4}"
+        )
+        _render_progress(done, total, start_ts, f"{label} {extra}")
+        if sys.stderr.isatty():
+            sys.stderr.write("\n")
+            sys.stderr.flush()
 
     progress_thread = threading.Thread(target=progress_worker, daemon=True)
     progress_thread.start()

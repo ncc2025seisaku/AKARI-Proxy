@@ -26,17 +26,18 @@ from .http_client import fetch_async, DEFAULT_TIMEOUT
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "conf" / "remote.toml"
-DEFAULT_SESSION_POOL_SIZE = 8
+DEFAULT_SESSION_POOL_SIZE = 64
 DEFAULT_RCVBUF = 1_048_576  # 1MB
 
 
-class DisposableSessionPool:
-    """使い捨て aiohttp.ClientSession を事前生成して待機させる簡易プール。"""
+class ReusableSessionPool:
+    """再利用可能な aiohttp.ClientSession を前もって複数立ち上げて使い回すプール。"""
 
-    def __init__(self, *, size: int, timeout: float, logger: logging.Logger) -> None:
+    def __init__(self, *, size: int, timeout: float, logger: logging.Logger, connector_limit: int | None = 0) -> None:
         self.size = max(1, size)
         self.timeout = timeout
         self.logger = logger
+        self.connector_limit = connector_limit
         self._queue: asyncio.Queue = asyncio.Queue()
         self._closed = False
 
@@ -53,7 +54,13 @@ class DisposableSessionPool:
             raise RuntimeError("aiohttp がインストールされていません") from exc
 
         timeout_cfg = aiohttp.ClientTimeout(total=self.timeout, sock_read=self.timeout, sock_connect=self.timeout)
-        session = aiohttp.ClientSession(timeout=timeout_cfg, auto_decompress=False)
+        connector = aiohttp.TCPConnector(
+            limit=self.connector_limit,  # 0 なら無制限、None なら aiohttp 既定（100）
+            limit_per_host=0 if self.connector_limit == 0 else None,
+            ttl_dns_cache=300,
+            enable_cleanup_closed=True,
+        )
+        session = aiohttp.ClientSession(timeout=timeout_cfg, auto_decompress=False, connector=connector)
         await self._queue.put(session)
 
     async def acquire(self):
@@ -62,10 +69,13 @@ class DisposableSessionPool:
         return await self._queue.get()
 
     async def recycle(self, session) -> None:
-        try:
+        if self._closed:
             await session.close()
-        finally:
+            return
+        if session.closed:
             await self._enqueue_new()
+        else:
+            await self._queue.put(session)
 
     async def close(self) -> None:
         self._closed = True
@@ -137,7 +147,12 @@ async def serve_remote_proxy_async(
 
     timeout_value = request_timeout or DEFAULT_TIMEOUT
 
-    session_pool = DisposableSessionPool(size=session_pool_size, timeout=timeout_value, logger=logger)
+    session_pool = ReusableSessionPool(
+        size=session_pool_size,
+        timeout=timeout_value,
+        logger=logger,
+        connector_limit=0,  # 無制限で同時接続を張れるようにする（負荷試験向け）
+    )
     await session_pool.start()
 
     # Windows 環境で ICMP Port Unreachable を受け取った際に ConnectionResetError で

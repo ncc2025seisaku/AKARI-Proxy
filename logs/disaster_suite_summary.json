@@ -1,9 +1,9 @@
 {
-  "started_at": 1765161397.0040333,
-  "finished_at": 1765162257.0548444,
+  "started_at": 1765163689.4199572,
+  "finished_at": 1765163854.2961066,
   "records": [
     {
-      "timestamp": 1765161397.0840452,
+      "timestamp": 1765163689.9282424,
       "iteration": 1,
       "scenario": "baseline_demo",
       "description": "Baseline sanity: local demo server, no loss/jitter.",
@@ -42,15 +42,15 @@
         "bytes_received": 4880,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 0.0016,
-        "latency_p95_sec": 0.0026,
-        "latency_p99_sec": 0.0037,
-        "elapsed_sec": 0.068,
-        "rps": 1184.02
+        "latency_avg_sec": 0.0015,
+        "latency_p95_sec": 0.0023,
+        "latency_p99_sec": 0.0038,
+        "elapsed_sec": 0.063,
+        "rps": 1273.91
       }
     },
     {
-      "timestamp": 1765161428.1140888,
+      "timestamp": 1765163707.9634757,
       "iteration": 1,
       "scenario": "delay_loss_extreme",
       "description": "3s delay + 20% loss + 300ms jitter (disaster worst-case).",
@@ -87,17 +87,17 @@
         "exceptions": 0,
         "bytes_sent": 12600,
         "bytes_received": 700200,
-        "nacks_sent": 91,
+        "nacks_sent": 92,
         "request_retries": 0,
-        "latency_avg_sec": 2.3804,
-        "latency_p95_sec": 3.4917,
-        "latency_p99_sec": 4.093,
-        "elapsed_sec": 31.02,
-        "rps": 6.45
+        "latency_avg_sec": 1.3434,
+        "latency_p95_sec": 2.0211,
+        "latency_p99_sec": 2.4061,
+        "elapsed_sec": 17.696,
+        "rps": 11.3
       }
     },
     {
-      "timestamp": 1765161455.077857,
+      "timestamp": 1765163724.4940138,
       "iteration": 1,
       "scenario": "jitter_spike",
       "description": "Jitter 350ms spike: reorder/timeout/backoff stability check.",
@@ -136,15 +136,15 @@
         "bytes_received": 700200,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 2.0846,
-        "latency_p95_sec": 3.4592,
-        "latency_p99_sec": 3.6209,
-        "elapsed_sec": 26.951,
-        "rps": 7.42
+        "latency_avg_sec": 1.2077,
+        "latency_p95_sec": 1.677,
+        "latency_p99_sec": 1.9053,
+        "elapsed_sec": 16.026,
+        "rps": 12.48
       }
     },
     {
-      "timestamp": 1765161479.5779614,
+      "timestamp": 1765163736.0140412,
       "iteration": 1,
       "scenario": "loss_heavy",
       "description": "25% loss: retry backoff and stability check.",
@@ -181,17 +181,17 @@
         "exceptions": 0,
         "bytes_sent": 13860,
         "bytes_received": 770220,
-        "nacks_sent": 128,
+        "nacks_sent": 124,
         "request_retries": 0,
-        "latency_avg_sec": 2.1261,
-        "latency_p95_sec": 3.1909,
-        "latency_p99_sec": 3.5843,
-        "elapsed_sec": 24.479,
-        "rps": 8.99
+        "latency_avg_sec": 0.9549,
+        "latency_p95_sec": 1.7294,
+        "latency_p99_sec": 2.3027,
+        "elapsed_sec": 11.453,
+        "rps": 19.21
       }
     },
     {
-      "timestamp": 1765161570.999162,
+      "timestamp": 1765163751.063725,
       "iteration": 1,
       "scenario": "burst_traffic",
       "description": "High concurrency burst: PPS and throughput durability.",
@@ -226,19 +226,19 @@
         "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 50652,
+        "bytes_sent": 50400,
         "bytes_received": 2800800,
-        "nacks_sent": 85,
-        "request_retries": 4,
-        "latency_avg_sec": 5.357,
-        "latency_p95_sec": 7.3121,
-        "latency_p99_sec": 8.2527,
-        "elapsed_sec": 91.372,
-        "rps": 8.76
+        "nacks_sent": 74,
+        "request_retries": 0,
+        "latency_avg_sec": 0.8451,
+        "latency_p95_sec": 1.5543,
+        "latency_p99_sec": 1.9581,
+        "elapsed_sec": 14.511,
+        "rps": 55.13
       }
     },
     {
-      "timestamp": 1765161613.3029842,
+      "timestamp": 1765163767.0910316,
       "iteration": 1,
       "scenario": "multistream_sustained",
       "description": "Mid-load sustained run: watch for leaks and drift.",
@@ -277,15 +277,15 @@
         "bytes_received": 1400400,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 3.2486,
-        "latency_p95_sec": 3.7514,
-        "latency_p99_sec": 3.9447,
-        "elapsed_sec": 42.274,
-        "rps": 9.46
+        "latency_avg_sec": 1.2347,
+        "latency_p95_sec": 2.8861,
+        "latency_p99_sec": 3.8429,
+        "elapsed_sec": 15.984,
+        "rps": 25.03
       }
     },
     {
-      "timestamp": 1765161630.1367555,
+      "timestamp": 1765163781.6160944,
       "iteration": 1,
       "scenario": "flap_drop",
       "description": "Intermittent drop: 20% loss + small delay to verify recovery.",
@@ -322,17 +322,17 @@
         "exceptions": 0,
         "bytes_sent": 9450,
         "bytes_received": 525150,
-        "nacks_sent": 69,
+        "nacks_sent": 66,
         "request_retries": 0,
-        "latency_avg_sec": 1.2682,
-        "latency_p95_sec": 2.1999,
-        "latency_p99_sec": 2.3634,
-        "elapsed_sec": 16.808,
-        "rps": 8.92
+        "latency_avg_sec": 1.0265,
+        "latency_p95_sec": 1.7244,
+        "latency_p99_sec": 2.2622,
+        "elapsed_sec": 14.354,
+        "rps": 10.45
       }
     },
     {
-      "timestamp": 1765161669.716646,
+      "timestamp": 1765163792.63738,
       "iteration": 1,
       "scenario": "flap_harsh",
       "description": "Harsh flap: 1.3s interval blackouts (0.25s) + light loss; focus on recovery.",
@@ -369,17 +369,17 @@
         "exceptions": 0,
         "bytes_sent": 12600,
         "bytes_received": 700200,
-        "nacks_sent": 63,
+        "nacks_sent": 56,
         "request_retries": 0,
-        "latency_avg_sec": 3.0755,
-        "latency_p95_sec": 5.8169,
-        "latency_p99_sec": 6.2173,
-        "elapsed_sec": 39.554,
-        "rps": 5.06
+        "latency_avg_sec": 0.7925,
+        "latency_p95_sec": 1.3366,
+        "latency_p99_sec": 1.5993,
+        "elapsed_sec": 10.924,
+        "rps": 18.31
       }
     },
     {
-      "timestamp": 1765161706.9332638,
+      "timestamp": 1765163803.6596289,
       "iteration": 1,
       "scenario": "flap_recovery_tuned",
       "description": "Gentler flap: shorter blackout with heartbeat/retry emphasis.",
@@ -416,17 +416,17 @@
         "exceptions": 0,
         "bytes_sent": 12600,
         "bytes_received": 700200,
-        "nacks_sent": 35,
+        "nacks_sent": 44,
         "request_retries": 0,
-        "latency_avg_sec": 2.9145,
-        "latency_p95_sec": 4.6149,
-        "latency_p99_sec": 5.503,
-        "elapsed_sec": 37.2,
-        "rps": 5.38
+        "latency_avg_sec": 0.8248,
+        "latency_p95_sec": 1.4203,
+        "latency_p99_sec": 1.698,
+        "elapsed_sec": 10.976,
+        "rps": 18.22
       }
     },
     {
-      "timestamp": 1765161744.4209726,
+      "timestamp": 1765163811.6798267,
       "iteration": 1,
       "scenario": "mtu_variation_like",
       "description": "MTU variation approximation: smaller buffer + mild loss/jitter.",
@@ -468,12 +468,12 @@
         "latency_avg_sec": 0.0,
         "latency_p95_sec": 0.0,
         "latency_p99_sec": 0.0,
-        "elapsed_sec": 37.459,
-        "rps": 6.41
+        "elapsed_sec": 7.695,
+        "rps": 31.19
       }
     },
     {
-      "timestamp": 1765161749.9366345,
+      "timestamp": 1765163813.6882021,
       "iteration": 1,
       "scenario": "gz_large_body",
       "description": "10MB body via demo server to stress compression/streaming.",
@@ -512,15 +512,15 @@
         "bytes_received": 21006,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 1.7718,
-        "latency_p95_sec": 2.8457,
-        "latency_p99_sec": 2.8457,
-        "elapsed_sec": 5.478,
-        "rps": 1.1
+        "latency_avg_sec": 0.6481,
+        "latency_p95_sec": 0.7538,
+        "latency_p99_sec": 0.7538,
+        "elapsed_sec": 1.979,
+        "rps": 3.03
       }
     },
     {
-      "timestamp": 1765162257.0528414,
+      "timestamp": 1765163854.2941144,
       "iteration": 1,
       "scenario": "sw_fetch_3000_like",
       "description": "3000-fetch like load with mild loss/jitter.",
@@ -551,19 +551,19 @@
         "demo_body_file": null
       },
       "summary": {
-        "success": 36,
-        "timeout": 2964,
+        "success": 3000,
+        "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 375858,
-        "bytes_received": 286111,
-        "nacks_sent": 2,
-        "request_retries": 2966,
-        "latency_avg_sec": 4.9837,
-        "latency_p95_sec": 9.9436,
-        "latency_p99_sec": 12.1049,
-        "elapsed_sec": 506.978,
-        "rps": 5.92
+        "bytes_sent": 189000,
+        "bytes_received": 10503000,
+        "nacks_sent": 133,
+        "request_retries": 0,
+        "latency_avg_sec": 1.5323,
+        "latency_p95_sec": 2.3832,
+        "latency_p99_sec": 3.0182,
+        "elapsed_sec": 40.135,
+        "rps": 74.75
       }
     }
   ]
