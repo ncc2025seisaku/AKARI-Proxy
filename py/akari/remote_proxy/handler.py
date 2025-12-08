@@ -29,9 +29,9 @@ from .http_client import (
 
 LOGGER = logging.getLogger(__name__)
 
-MTU_PAYLOAD_SIZE = 1180
-FIRST_CHUNK_METADATA_LEN = 8  # status(2) + hdr_len/reserved(2) + body_len(4)
-FIRST_CHUNK_CAPACITY = max(MTU_PAYLOAD_SIZE - FIRST_CHUNK_METADATA_LEN, 0)
+DEFAULT_MAX_DATAGRAM = 1200  # docs/AKARI.md: MTU 1200B 前提
+PROTO_OVERHEAD = 24 + 16  # fixed header + HMAC/AEAD tag
+SAFETY_MARGIN = 16  # 余白（将来拡張・計算ズレ吸収）
 FLAG_HAS_HEADER = 0x40
 FLAG_ENCRYPT = 0x80
 REQUIRE_ENCRYPTION = False
@@ -68,6 +68,26 @@ def set_fetch_async_func(func):
 
 def _now_timestamp() -> int:
     return int(time.time())
+
+
+def _max_datagram_size(buffer_size: int | None) -> int:
+    """送信可能な datagram 最大サイズを決める（MTU 1200B を上限）。
+
+    クライアント広告 buffer_size を優先し、それより大きくても 1200B でクリップ。
+    """
+    if buffer_size and buffer_size > 0:
+        return min(buffer_size, DEFAULT_MAX_DATAGRAM)
+    return DEFAULT_MAX_DATAGRAM
+
+
+def _calc_payload_caps(buffer_size: int | None, header_block_len: int) -> tuple[int, int]:
+    """先頭チャンク/後続チャンクの最大ペイロード長を計算する."""
+
+    max_dgram = _max_datagram_size(buffer_size)
+    base_cap = max(max_dgram - PROTO_OVERHEAD - SAFETY_MARGIN, 1)
+    cap_tail = base_cap
+    cap_first = max(base_cap - header_block_len, 1)
+    return cap_first, cap_tail
 
 
 def _clone_response(response: HttpResponse) -> HttpResponse:
@@ -140,15 +160,13 @@ def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | No
         _purge_http_cache(now=now)
 
 
-def _split_body(body: bytes) -> tuple[bytes, list[bytes]]:
-    if FIRST_CHUNK_CAPACITY <= 0:
-        first_chunk = b""
-        remaining = body
-    else:
-        first_chunk = body[:FIRST_CHUNK_CAPACITY]
-        remaining = body[FIRST_CHUNK_CAPACITY:]
+def _split_body(body: bytes, *, buffer_size: int | None, header_block_len: int) -> tuple[bytes, list[bytes]]:
+    cap_first, cap_tail = _calc_payload_caps(buffer_size, header_block_len)
 
-    tail_chunks = [remaining[i : i + MTU_PAYLOAD_SIZE] for i in range(0, len(remaining), MTU_PAYLOAD_SIZE)]
+    first_chunk = body[:cap_first]
+    remaining = body[cap_first:]
+    tail_chunks = [remaining[i : i + cap_tail] for i in range(0, len(remaining), cap_tail)] if remaining else []
+
     if not body:
         first_chunk = b""
     return first_chunk, tail_chunks
@@ -200,11 +218,12 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     body = response["body"]
     body_len = len(body)
     timestamp = _now_timestamp()
-    first_chunk, tail_chunks = _split_body(body)
+    buffer_size = getattr(request, "buffer_size", None)
+    header_block = encode_header_block(response["headers"])
+    first_chunk, tail_chunks = _split_body(body, buffer_size=buffer_size, header_block_len=len(header_block))
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
     version = int(request.header.get("version", 1))
-    header_block = encode_header_block(response["headers"])
     flags = FLAG_HAS_HEADER if header_block else 0
     if request.header.get("flags", 0) & FLAG_ENCRYPT:
         flags |= FLAG_ENCRYPT
@@ -259,6 +278,19 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                     timestamp,
                     request.psk,
                 )
+            )
+
+    # 安全チェック: 送信datagramがバッファ/MTU想定を超えていないか
+    max_dgram = _max_datagram_size(buffer_size)
+    for idx, datagram in enumerate(datagrams):
+        if len(datagram) > max_dgram:
+            LOGGER.warning(
+                "response datagram too large len=%d max=%d message_id=%s seq=%s/%s",
+                len(datagram),
+                max_dgram,
+                message_id,
+                idx,
+                seq_total,
             )
 
     # キャッシュして再送に備える

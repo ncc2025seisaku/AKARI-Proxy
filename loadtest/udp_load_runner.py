@@ -38,6 +38,7 @@ from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py,
 
 LOGGER = logging.getLogger("akari.loadtest")
 NACK_MIN_INTERVAL = 0.05  # seconds; avoid NACK連打
+PROGRESS_WIDTH = 30
 
 
 def parse_psk(value: str, *, hex_mode: bool) -> bytes:
@@ -106,6 +107,8 @@ class LoadTestClient(AkariUdpClient):
         bytes_sent_total = 0
         bytes_received_total = 0
         final_outcome: ResponseOutcome | None = None
+        total_nacks_sent = 0
+        request_retries = 0
 
         for attempt in range(self._initial_request_retries + 1):
             accumulator = ResponseAccumulator(message_id)
@@ -130,6 +133,20 @@ class LoadTestClient(AkariUdpClient):
                     try:
                         data, _ = sock.recvfrom(self._buffer_size)
                     except socket.timeout:
+                        # Mirror local proxy behavior: on idle + missing chunks, send NACK
+                        allow_nack = nack_sent < self._max_nack_rounds
+                        if (
+                            self._version >= 2
+                            and allow_nack
+                            and accumulator.seq_total is not None
+                            and not accumulator.complete
+                        ):
+                            missing_bitmap = self._build_missing_bitmap(accumulator)
+                            if missing_bitmap and (last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL):
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nack_sent += 1
+                                last_nack_sent_at = time.monotonic()
                         continue
 
                     if not self._skip_first_drop:
@@ -167,22 +184,28 @@ class LoadTestClient(AkariUdpClient):
                     packet_type = parsed["type"]
                     if packet_type == "resp":
                         accumulator.add_chunk(parsed)
+                        seq_total = accumulator.seq_total
+                        seq = payload.get("seq")
                         if accumulator.complete:
                             timed_out = False
                             break
+
+                        # Align with local proxy: send NACK only after tail chunk if gaps remain
+                        allow_nack = nack_sent < self._max_nack_rounds
                         if (
                             self._version >= 2
-                            and accumulator.seq_total is not None
-                            and payload.get("seq") is not None
-                            and nack_sent < self._max_nack_rounds
+                            and allow_nack
+                            and seq_total is not None
+                            and seq is not None
+                            and seq_total > 0
+                            and seq == seq_total - 1
                         ):
                             missing_bitmap = self._build_missing_bitmap(accumulator)
-                            if missing_bitmap:
-                                if last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL:
-                                    nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                                    sock.sendto(nack, self._remote_addr)
-                                    nack_sent += 1
-                                    last_nack_sent_at = time.monotonic()
+                            if missing_bitmap and (last_nack_sent_at is None or (time.monotonic() - last_nack_sent_at) >= NACK_MIN_INTERVAL):
+                                nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                                sock.sendto(nack, self._remote_addr)
+                                nack_sent += 1
+                                last_nack_sent_at = time.monotonic()
                     elif packet_type == "error":
                         error_payload = parsed["payload"]
                         timed_out = False
@@ -190,6 +213,8 @@ class LoadTestClient(AkariUdpClient):
 
             bytes_sent_total += bytes_sent
             bytes_received_total += bytes_received
+            total_nacks_sent += nack_sent
+            request_retries = attempt
 
             body = accumulator.assembled_body() if accumulator.complete else None
             final_outcome = ResponseOutcome(
@@ -203,6 +228,8 @@ class LoadTestClient(AkariUdpClient):
                 timed_out=timed_out,
                 bytes_sent=bytes_sent_total,
                 bytes_received=bytes_received_total,
+                nacks_sent=total_nacks_sent,
+                request_retries=request_retries,
             )
 
             if not timed_out:
@@ -227,6 +254,8 @@ class Counters:
     bytes_received: int = 0
     latencies: list[float] = field(default_factory=list)
     exceptions: int = 0
+    nacks_sent: int = 0
+    request_retries: int = 0
 
 
 class Aggregator:
@@ -245,6 +274,8 @@ class Aggregator:
                 self._counters.error += 1
             self._counters.bytes_sent += outcome.bytes_sent
             self._counters.bytes_received += outcome.bytes_received
+            self._counters.nacks_sent += getattr(outcome, "nacks_sent", 0)
+            self._counters.request_retries += getattr(outcome, "request_retries", 0)
 
     def add_exception(self, *, bytes_sent: int = 0, bytes_received: int = 0) -> None:
         with self._lock:
@@ -263,6 +294,8 @@ class Aggregator:
                 bytes_received=self._counters.bytes_received,
                 latencies=list(self._counters.latencies),
                 exceptions=self._counters.exceptions,
+                nacks_sent=self._counters.nacks_sent,
+                request_retries=self._counters.request_retries,
             )
         return copy
 
@@ -415,12 +448,27 @@ def summarize(counters: Counters, elapsed: float, total_requests: int) -> dict[s
         "exceptions": counters.exceptions,
         "bytes_sent": counters.bytes_sent,
         "bytes_received": counters.bytes_received,
+        "nacks_sent": counters.nacks_sent,
+        "request_retries": counters.request_retries,
         "latency_avg_sec": round(avg, 4),
         "latency_p95_sec": round(percentile(counters.latencies, 0.95), 4),
         "latency_p99_sec": round(percentile(counters.latencies, 0.99), 4),
         "elapsed_sec": round(elapsed, 3),
         "rps": round(total_requests / elapsed, 2) if elapsed else total_requests,
     }
+
+def _render_progress(done: int, total: int, started_at: float, label: str) -> None:
+    # 端末でない場合は描画しない
+    if not sys.stderr.isatty():
+        return
+    pct = done / total if total else 0.0
+    filled = int(PROGRESS_WIDTH * pct)
+    bar = "█" * filled + "░" * (PROGRESS_WIDTH - filled)
+    elapsed = time.time() - started_at
+    eta = (elapsed / done * (total - done)) if done else 0.0
+    msg = f"\r\033[2K[{bar}] {done:4}/{total:4} {pct*100:5.1f}% | {label:<18}"
+    sys.stderr.write(msg)
+    sys.stderr.flush()
 
 
 def build_tasks(total: int, urls: Sequence[str]) -> "queue.Queue[tuple[int, str]]":
@@ -483,6 +531,8 @@ def worker_main(
                         "error": outcome.error,
                         "bytes_sent": outcome.bytes_sent,
                         "bytes_received": outcome.bytes_received,
+                        "nacks_sent": getattr(outcome, "nacks_sent", 0),
+                        "request_retries": getattr(outcome, "request_retries", 0),
                         "timestamp": time.time(),
                     }
                 )
@@ -561,14 +611,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def apply_remote_config(args: argparse.Namespace) -> None:
-    """Mutate args in-place using remote.toml defaults if provided."""
+    """Mutate args in-place using remote.toml / web_proxy.toml defaults if provided."""
 
     if not args.remote_config:
         return
 
     cfg_path = Path(args.remote_config)
     data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    server = data.get("server", {}) if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return
+
+    # remote.toml -> [server], web_proxy.toml -> [remote]
+    server = data.get("server") or data.get("remote") or {}
+    if not isinstance(server, dict):
+        return
 
     host = server.get("host")
     port = server.get("port")
@@ -647,6 +703,43 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
 
     tasks = build_tasks(args.requests, urls)
     agg = Aggregator()
+    start_ts = time.perf_counter()
+    progress_stop = threading.Event()
+
+    def progress_worker() -> None:
+        label = getattr(args, "progress_label", "") or "running"
+        total = args.requests
+        while not progress_stop.is_set():
+            snap = agg.snapshot()
+            raw_done = snap.success + snap.timeout + snap.error + snap.exceptions
+            done = min(total, raw_done)
+            pending = max(tasks.qsize(), 0)
+            inflight = max(total - pending - done, 0)
+            extra = (
+                f" pend {pending:4} infl {inflight:4}"
+                f" | suc {snap.success:4} to {snap.timeout:4} err {snap.error:4}"
+                f" | nack {snap.nacks_sent:4} retry {snap.request_retries:4}"
+            )
+            _render_progress(done, total, start_ts, f"{label} {extra}")
+            time.sleep(0.5)
+        # final paint
+        snap = agg.snapshot()
+        raw_done = snap.success + snap.timeout + snap.error + snap.exceptions
+        done = min(total, raw_done)
+        pending = max(tasks.qsize(), 0)
+        inflight = max(total - pending - done, 0)
+        extra = (
+            f" pend {pending:4} infl {inflight:4}"
+            f" | suc {snap.success:4} to {snap.timeout:4} err {snap.error:4}"
+            f" | nack {snap.nacks_sent:4} retry {snap.request_retries:4}"
+        )
+        _render_progress(done, total, start_ts, f"{label} {extra}")
+        if sys.stderr.isatty():
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    progress_thread = threading.Thread(target=progress_worker, daemon=True)
+    progress_thread.start()
     workers = []
     for i in range(args.concurrency):
         client = LoadTestClient(
@@ -681,6 +774,9 @@ def run_load_test(args: argparse.Namespace, *, configure_logging: bool = False) 
     for t in workers:
         t.join()
     elapsed = time.perf_counter() - start
+
+    progress_stop.set()
+    progress_thread.join()
 
     if server:
         server.stop()
