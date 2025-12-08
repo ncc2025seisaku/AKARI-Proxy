@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit, urlunsplit
 
 from akari.udp_client import AkariUdpClient, ResponseOutcome
 from .config import WebProxyConfig
@@ -175,10 +175,12 @@ class WebRouter:
         if not outcome.complete or outcome.body is None:
             return self._text_response(502, "レスポンスが揃いませんでした。")
 
-        return self._raw_response(target_url, outcome, skip_filter=skip_filter)
+        return self._raw_response(target_url, outcome, skip_filter=skip_filter, use_encryption=use_encryption)
 
     # ------------------------------- response shaping -------------------------------
-    def _raw_response(self, url: str, outcome: ResponseOutcome, *, skip_filter: bool = False) -> RouteResult:
+    def _raw_response(
+        self, url: str, outcome: ResponseOutcome, *, skip_filter: bool = False, use_encryption: bool = False
+    ) -> RouteResult:
         body = outcome.body or b""
         headers = {
             "X-AKARI-Message-Id": f"0x{outcome.message_id:x}",
@@ -216,11 +218,11 @@ class WebRouter:
                 )
 
         if content_type.startswith("text/html") and decompressed:
-            body = self._rewrite_html_to_proxy(body, url)
+            body = self._rewrite_html_to_proxy(body, url, use_encryption=use_encryption)
         elif content_type.startswith("text/css") and decompressed:
-            body = self._rewrite_css_to_proxy(body, url)
+            body = self._rewrite_css_to_proxy(body, url, use_encryption=use_encryption)
         elif "javascript" in content_type and decompressed:
-            body = self._rewrite_js_to_proxy(body, url)
+            body = self._rewrite_js_to_proxy(body, url, use_encryption=use_encryption)
         headers["Content-Length"] = str(len(body))
         status_code = int(outcome.status_code or 200)
         return RouteResult(status_code=status_code, body=body, headers=headers)
@@ -228,7 +230,7 @@ class WebRouter:
     # ---------------------------------------------------------------------------
     # HTML rewrite: absolute URLs -> proxy pass
     # ---------------------------------------------------------------------------
-    def _rewrite_html_to_proxy(self, body: bytes, source_url: str) -> bytes:
+    def _rewrite_html_to_proxy(self, body: bytes, source_url: str, *, use_encryption: bool) -> bytes:
         text = body.decode("utf-8", errors="replace")
         base_url = source_url
 
@@ -236,7 +238,7 @@ class WebRouter:
         attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
 
         def attr_repl(m: re.Match) -> str:
-            return f'{m.group("prefix")}{self._to_proxy_url(m.group(2), base_url)}'
+            return f'{m.group("prefix")}{self._to_proxy_url(m.group(2), base_url, use_encryption=use_encryption)}'
 
         text = attr_pattern.sub(attr_repl, text)
 
@@ -253,7 +255,7 @@ class WebRouter:
                     continue
                 url = tokens[0]
                 rest = " ".join(tokens[1:])
-                url = self._to_proxy_url(url, base_url)
+                url = self._to_proxy_url(url, base_url, use_encryption=use_encryption)
                 parts.append(" ".join([url, rest]).strip())
             return f'srcset="{", ".join(parts)}"'
 
@@ -270,7 +272,7 @@ class WebRouter:
 
         return text.encode("utf-8", errors="replace")
 
-    def _rewrite_css_to_proxy(self, body: bytes, source_url: str) -> bytes:
+    def _rewrite_css_to_proxy(self, body: bytes, source_url: str, *, use_encryption: bool) -> bytes:
         """Rewrite CSS url() references to pass through the proxy."""
         text = body.decode("utf-8", errors="replace")
         base_url = source_url
@@ -278,19 +280,19 @@ class WebRouter:
         def repl(m: re.Match) -> str:
             quote = m.group("quote") or ""
             original = m.group("url")
-            rewritten = self._to_proxy_url(original, base_url)
+            rewritten = self._to_proxy_url(original, base_url, use_encryption=use_encryption)
             return f"url({quote}{rewritten}{quote})"
 
         pattern = re.compile(r'url\(\s*(?P<quote>[\'"]?)(?P<url>[^\'")]+)\s*(?P=quote)?\)', re.IGNORECASE)
         return pattern.sub(repl, text).encode("utf-8", errors="replace")
 
-    def _rewrite_js_to_proxy(self, body: bytes, source_url: str) -> bytes:
+    def _rewrite_js_to_proxy(self, body: bytes, source_url: str, *, use_encryption: bool) -> bytes:
         """Rewrite simple import()/fetch()/static import URLs to go through proxy."""
         text = body.decode("utf-8", errors="replace")
         base_url = source_url
 
         def rewrite_literal(url_literal: str) -> str:
-            return self._to_proxy_url(url_literal, base_url)
+            return self._to_proxy_url(url_literal, base_url, use_encryption=use_encryption)
 
         # fetch('...') / fetch("...")
         fetch_pat = re.compile(r'(fetch\s*\(\s*)([\'"])([^\'"]+)([\'"])', re.IGNORECASE)
@@ -316,7 +318,7 @@ class WebRouter:
 
         return text.encode("utf-8", errors="replace")
 
-    def _to_proxy_url(self, url: str, base_url: str) -> str:
+    def _to_proxy_url(self, url: str, base_url: str, *, use_encryption: bool = False) -> str:
         """Convert absolute/relative URL into proxied URL, preserving data/js/mailto."""
         if not url or url.startswith(("data:", "javascript:", "mailto:", "#")):
             return url
@@ -326,7 +328,15 @@ class WebRouter:
             url = "https:" + url
         if not url.startswith(("http://", "https://")) and base_url:
             url = urljoin(base_url, url)
-        return self._proxy_base + url
+        proxied = self._proxy_base + url
+        if not use_encryption:
+            return proxied
+        parsed = urlsplit(proxied)
+        params = parse_qs(parsed.query)
+        if "enc" in params or "e" in params:
+            return proxied
+        sep = "&" if parsed.query else ""
+        return urlunsplit(parsed._replace(query=f"{parsed.query}{sep}enc=1"))
 
     # ---------------------------------------------------------------------------
     # Strip security headers (CSP etc.)
