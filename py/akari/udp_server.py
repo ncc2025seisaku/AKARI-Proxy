@@ -28,6 +28,8 @@ class IncomingRequest:
     parsed: Mapping[str, Any]
     datagram: bytes
     psk: bytes
+    buffer_size: int = 65535
+    buffer_size: int
 
 
 class AkariUdpServer:
@@ -81,6 +83,7 @@ class AkariUdpServer:
             parsed=parsed,
             datagram=data,
             psk=self._psk,
+            buffer_size=self.buffer_size,
         )
 
         for datagram in self._handler(request):
