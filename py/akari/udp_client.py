@@ -152,6 +152,7 @@ class AkariUdpClient:
         *,
         timeout: float | None = None,
         buffer_size: int = 65535,
+        rcvbuf_bytes: int = 1_048_576,
         protocol_version: int = 2,
         max_nack_rounds: int | None = 3,
         max_ack_rounds: int = 0,
@@ -176,6 +177,13 @@ class AkariUdpClient:
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
+        try:
+            target_rcvbuf = max(int(rcvbuf_bytes), buffer_size)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, target_rcvbuf)
+            actual = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
+        except OSError:
+            LOGGER.warning("could not set UDP SO_RCVBUF to %s", rcvbuf_bytes)
 
     def send_request(
         self,
@@ -249,16 +257,18 @@ class AkariUdpClient:
                     and accumulator.seq_total is not None
                     and not accumulator.complete
                 ):
-                    missing_bitmap = self._build_missing_bitmap(accumulator)
-                    if missing_bitmap:
+                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                    if missing_seqs:
+                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
                         nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
                         sock.sendto(nack, self._remote_addr)
                         bytes_sent += len(nack)
                         nacks_sent += 1
                         last_activity = time.monotonic()
                         LOGGER.debug(
-                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d",
+                            "send NACK message_id=%s missing=%s bitmap_len=%d nacks_sent=%d",
                             message_id,
+                            missing_seqs,
                             len(missing_bitmap),
                             nacks_sent,
                         )
@@ -341,15 +351,17 @@ class AkariUdpClient:
                     and seq_total > 0
                     and seq == seq_total - 1
                 ):
-                    missing_bitmap = self._build_missing_bitmap(accumulator)
-                    if missing_bitmap:
+                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                    if missing_seqs:
+                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
                         nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
                         sock.sendto(nack, self._remote_addr)
                         bytes_sent += len(nack)
                         nacks_sent += 1
                         LOGGER.debug(
-                            "send NACK message_id=%s bitmap_len=%d nacks_sent=%d (after tail chunk)",
+                            "send NACK message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (after tail chunk)",
                             message_id,
+                            missing_seqs,
                             len(missing_bitmap),
                             nacks_sent,
                         )
@@ -385,10 +397,12 @@ class AkariUdpClient:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    def _build_missing_bitmap(self, acc: ResponseAccumulator) -> bytes:
+    def _missing_seq_list(self, acc: ResponseAccumulator) -> list[int]:
         if acc.seq_total is None:
-            return b""
-        missing = [i for i in range(acc.seq_total) if i not in acc.chunks]
+            return []
+        return [i for i in range(acc.seq_total) if i not in acc.chunks]
+
+    def _build_missing_bitmap_from_list(self, missing: list[int]) -> bytes:
         if not missing:
             return b""
         max_seq = max(missing)
@@ -399,6 +413,19 @@ class AkariUdpClient:
             bit = seq % 8
             bitmap[idx] |= 1 << bit
         return bytes(bitmap)
+
+    def _sanitize_missing(self, missing: list[int], acc: ResponseAccumulator) -> list[int]:
+        # 念のため、受信済みが混ざっていたら除外しログに残す
+        filtered = [seq for seq in missing if seq not in acc.chunks]
+        if len(filtered) != len(missing):
+            dup = sorted(set(missing) - set(filtered))
+            LOGGER.warning(
+                "NACK missing list contained already received seqs; filtered=%s duplicates=%s message_id=%s",
+                filtered,
+                dup,
+                acc.message_id,
+            )
+        return filtered
 
     def _first_missing_seq(self, acc: ResponseAccumulator) -> int | None:
         """Return the smallest missing sequence number if any."""

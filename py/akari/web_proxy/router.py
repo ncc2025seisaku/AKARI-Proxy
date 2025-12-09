@@ -173,6 +173,17 @@ class WebRouter:
         except ValueError as exc:
             return self._text_response(502, str(exc))
 
+        self._logger.info(
+            "udp outcome msg_id=0x%x nacks=%d retries=%d bytes_sent=%d bytes_recv=%d complete=%s timed_out=%s",
+            outcome.message_id,
+            outcome.nacks_sent,
+            outcome.request_retries,
+            outcome.bytes_sent,
+            outcome.bytes_received,
+            outcome.complete,
+            outcome.timed_out,
+        )
+
         if outcome.error:
             payload = outcome.error
             message = payload.get("message") or f"AKARI error code={payload.get('error_code')}"

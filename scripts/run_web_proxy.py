@@ -21,11 +21,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(PROJECT_ROOT / "conf" / "web_proxy.toml"), help="Path to web proxy config")
     parser.add_argument("--static-dir", default=str(PY_DIR / "akari" / "web_proxy" / "static"))
     parser.add_argument("--entry-file", default="index.html", help="Entry HTML file under the static directory")
+    parser.add_argument("--log-level", default="INFO", help="Logging level (DEBUG/INFO/WARN/ERROR)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    import logging
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     try:
         config = load_config(args.config)
     except ConfigError as exc:

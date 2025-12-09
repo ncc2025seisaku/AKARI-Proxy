@@ -393,6 +393,15 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     with RESP_CACHE_LOCK:
         RESP_CACHE[message_id] = (time.time(), datagrams)
         _purge_resp_cache()
+
+    LOGGER.info(
+        "encode success message_id=%s status=%s body_len=%s seq_total=%s header_len=%s",
+        message_id,
+        response.get("status_code"),
+        body_len,
+        seq_total,
+        len(header_block),
+    )
     return datagrams
 
 
