@@ -158,6 +158,7 @@ class AkariUdpClient:
         use_encryption: bool = False,
         initial_request_retries: int = 1,
         sock_timeout: float = 1.0,
+        first_seq_timeout: float = 0.5,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -170,6 +171,8 @@ class AkariUdpClient:
         self._version = protocol_version
         self._initial_request_retries = max(0, int(initial_request_retries))
         self._sock_timeout = sock_timeout
+        # seq_total が不明のまま先頭チャンクを待つ許容時間。超えたら捨てて再リクエスト。
+        self._first_seq_timeout = max(0.0, float(first_seq_timeout)) if first_seq_timeout is not None else None
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
@@ -197,6 +200,7 @@ class AkariUdpClient:
         bytes_sent = len(datagram)
         bytes_received = 0
         acks_sent = 0
+        first_seq_deadline: float | None = None
 
         sock = self._sock
         sock.sendto(datagram, self._remote_addr)
@@ -210,6 +214,24 @@ class AkariUdpClient:
                 LOGGER.debug("recvfrom ConnectionResetError (ignored)")
                 continue
             except socket.timeout:
+                # 先頭チャンク（seq_total 情報）がないまま一定時間経過したら破棄して再リクエスト
+                now = time.monotonic()
+                waiting_first = accumulator.seq_total is None and accumulator.chunks
+                allow_first_retry = self._first_seq_timeout is not None and req_retries_left > 0
+                if waiting_first and allow_first_retry:
+                    if first_seq_deadline is None:
+                        first_seq_deadline = now + self._first_seq_timeout
+                    if now >= first_seq_deadline:
+                        accumulator = ResponseAccumulator(message_id)
+                        first_seq_deadline = None
+                        nacks_sent = 0
+                        sock.sendto(datagram, self._remote_addr)
+                        bytes_sent += len(datagram)
+                        req_retries_left -= 1
+                        last_activity = now
+                        LOGGER.debug("retry request (missing seq0) message_id=%s (%d left)", message_id, req_retries_left)
+                        continue
+
                 # 何も受信できていない場合はリクエスト自体を限定回数で再送
                 if not packets and req_retries_left > 0:
                     sock.sendto(datagram, self._remote_addr)
@@ -281,6 +303,10 @@ class AkariUdpClient:
                 accumulator.add_chunk(parsed)
                 seq_total = accumulator.seq_total
                 seq = payload.get("seq")
+
+                # seq_total が取れたら先頭待ちタイマーを解除
+                if seq_total is not None:
+                    first_seq_deadline = None
 
                 # 欠損があれば ACK を送って最初の欠損シーケンスを通知
                 if (

@@ -56,6 +56,49 @@ class WebRouterEncryptionTest(unittest.TestCase):
         self.assertTrue(router._coerce_bool({"enc": ["1"]}, "enc"))
         self.assertFalse(router._coerce_bool({"enc": ["0"]}, "enc"))
 
+    def test_location_header_is_rewritten_to_proxy(self):
+        cfg = self._config()
+        router = WebRouter(cfg)
+        router._proxy_base = "http://localhost:8080/"
+
+        outcome = ResponseOutcome(
+            message_id=1,
+            packets=[],
+            body=b"",
+            status_code=302,
+            headers={"Location": "https://example.com/foo?x=1"},
+            error=None,
+            complete=True,
+            timed_out=False,
+            bytes_sent=1,
+            bytes_received=1,
+        )
+        result = router._raw_response("https://example.com/search?q=a", outcome)
+        self.assertEqual(result.headers["Location"], "http://localhost:8080/https%3A%2F%2Fexample.com%2Ffoo%3Fx%3D1")
+
+    def test_html_meta_refresh_and_form_action_are_rewritten(self):
+        cfg = self._config()
+        router = WebRouter(cfg)
+        router._proxy_base = "http://localhost:8080/"
+        html = (
+            '<html><head>'
+            '<meta http-equiv="refresh" content="0;url=/consent?continue=https://google.com/search?q=a">'
+            '</head><body>'
+            '<form action="/search" method="get"><input name="q"></form>'
+            '</body></html>'
+        ).encode()
+        rewritten = router._rewrite_html_to_proxy(html, "https://google.com/search?q=a").decode()
+        self.assertIn('action="http://localhost:8080/https%3A%2F%2Fgoogle.com%2Fsearch"', rewritten)
+        self.assertIn('url=http://localhost:8080/https%3A%2F%2Fgoogle.com%2Fconsent%3Fcontinue%3Dhttps%3A%2F%2Fgoogle.com%2Fsearch%3Fq%3Da', rewritten)
+
+    def test_outer_query_params_are_merged_into_target_url(self):
+        cfg = self._config()
+        router = WebRouter(cfg)
+        merged = router._merge_outer_params_into_url(
+            "https://google.com/search?q=a", {"entry": ["1"], "sei": ["abc"], "foo": ["bar"], "_akari_ref": ["1"]}
+        )
+        self.assertEqual(merged, "https://google.com/search?q=a&sei=abc&foo=bar")
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite([loader.loadTestsFromTestCase(WebRouterEncryptionTest)])

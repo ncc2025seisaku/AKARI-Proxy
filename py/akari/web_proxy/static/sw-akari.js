@@ -1,6 +1,16 @@
 // AKARI Web Proxy Service Worker
 const proxyBase = self.location.origin + "/";
 
+self.addEventListener("install", (event) => {
+  // 新バージョンを即座に有効化
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  // 既存クライアントにも即時適用
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = req.url;
@@ -21,7 +31,8 @@ self.addEventListener("fetch", (event) => {
   }
 
   // プロキシ経由に書き換え
-  const proxiedUrl = proxyBase + url;
+  // クエリ付き URL をそのままパスに載せると outer query に食われるのでエンコードする
+  const proxiedUrl = proxyBase + encodeURIComponent(url);
   const newRequest = new Request(proxiedUrl, {
     method: req.method,
     headers: req.headers,

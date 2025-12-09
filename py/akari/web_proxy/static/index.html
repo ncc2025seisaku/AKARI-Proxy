@@ -563,7 +563,8 @@
         const params = new URLSearchParams();
         params.set("entry", "1");
         if (encryptEnabled) params.set("enc", "1");
-        window.location.href = `/${normalized}?${params.toString()}`;
+        // URL 全体をパスにエンコードし、クエリが外側に漏れないようにする
+        window.location.href = `/${encodeURIComponent(normalized)}?${params.toString()}`;
       };
 
       searchButton.addEventListener("click", openProxy);

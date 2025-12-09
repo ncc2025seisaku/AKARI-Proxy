@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin, urlencode, urlunsplit
 
 from akari.udp_client import AkariUdpClient, ResponseOutcome
 from .config import WebProxyConfig
@@ -143,7 +143,8 @@ class WebRouter:
             return None
         skip_filter = bool(params.get("entry"))
         use_encryption = self._coerce_bool(params, "enc") or self._coerce_bool(params, "e") or False
-        return self._execute_proxy(url, skip_filter=skip_filter, use_encryption=use_encryption)
+        merged_url = self._merge_outer_params_into_url(url, params)
+        return self._execute_proxy(merged_url, skip_filter=skip_filter, use_encryption=use_encryption)
 
     def _execute_proxy(self, raw_url: str, *, skip_filter: bool = False, use_encryption: bool = False) -> RouteResult:
         if not raw_url:
@@ -196,6 +197,11 @@ class WebRouter:
             headers["Content-Type"] = "text/html; charset=utf-8"
 
         self._strip_security_headers(headers)
+        # Location リダイレクトも必ずプロキシ経由に書き換える
+        location = headers.get("Location") or headers.get("location")
+        if location:
+            headers["Location"] = self._to_proxy_url(location, url)
+            headers.pop("location", None)
         body, decompressed = self._maybe_decompress(body, headers)
 
         content_type = headers.get("Content-Type", "").lower()
@@ -232,8 +238,8 @@ class WebRouter:
         text = body.decode("utf-8", errors="replace")
         base_url = source_url
 
-        # Allow whitespace/case variations around href/src attributes
-        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
+        # Allow whitespace/case variations around href/src/action attributes
+        attr_pattern = re.compile(r'(?P<prefix>\b(?:href|src|action)\s*=\s*["\'])([^"\']+)', re.IGNORECASE)
 
         def attr_repl(m: re.Match) -> str:
             return f'{m.group("prefix")}{self._to_proxy_url(m.group(2), base_url)}'
@@ -258,6 +264,39 @@ class WebRouter:
             return f'srcset="{", ".join(parts)}"'
 
         text = srcset_pattern.sub(srcset_repl, text)
+
+        # <meta http-equiv="refresh" content="0;url=...">
+        meta_refresh_pattern = re.compile(
+            r'(<meta\s+[^>]*http-equiv\s*=\s*["\']refresh["\'][^>]*content\s*=\s*["\'])([^"\']+)',
+            re.IGNORECASE,
+        )
+        # ループ防止: 一度リダイレクトしたら次回は meta refresh を除去するためのフラグ
+        already_refreshed = False
+        try:
+            parsed_src = urlsplit(source_url)
+            qs = parse_qs(parsed_src.query)
+            already_refreshed = "_akari_ref" in qs
+        except Exception:
+            already_refreshed = False
+
+        def meta_refresh_repl(m: re.Match) -> str:
+            if already_refreshed:
+                # すでに1回リダイレクト済みなら meta refresh を除去してループを断つ
+                return ""
+            prefix = m.group(1)
+            content = m.group(2)
+            parts = content.split(";", 1)
+            if len(parts) == 2:
+                delay, url_part = parts[0].strip(), parts[1].strip()
+                if url_part.lower().startswith("url="):
+                    url_literal = url_part[4:].strip()
+                    proxied = self._to_proxy_url(url_literal, base_url)
+                    separator = "&" if "?" in proxied else "?"
+                    proxied = f"{proxied}{separator}_akari_ref=1"
+                    return f'{prefix}{delay};url={proxied}'
+            return m.group(0)
+
+        text = meta_refresh_pattern.sub(meta_refresh_repl, text)
 
         registration_snippet = (
             '<script>(function(){'
@@ -326,7 +365,9 @@ class WebRouter:
             url = "https:" + url
         if not url.startswith(("http://", "https://")) and base_url:
             url = urljoin(base_url, url)
-        return self._proxy_base + url
+        # URL 全体をパスに埋め込むため、クエリを含めてエンコードして外側のクエリと衝突させない
+        encoded = quote(url, safe="")
+        return self._proxy_base + encoded
 
     # ---------------------------------------------------------------------------
     # Strip security headers (CSP etc.)
@@ -430,6 +471,28 @@ class WebRouter:
                 if candidate:
                     return candidate
         return ""
+
+    def _merge_outer_params_into_url(self, url: str, outer_params: Mapping[str, list[str]]) -> str:
+        """Move non-control query parameters from outer query back into the inner target URL.
+
+        Browsers may append parameters (e.g., Google の `sei`) to the visible URL. Those should
+        accompany the upstream request, not stay as control params. Control flags (entry/enc/_akari_ref)
+        remain外側のまま。
+        """
+        control_keys = {"entry", "enc", "e", "_akari_ref"}
+        extras = {k: v for k, v in outer_params.items() if k not in control_keys}
+        if not extras:
+            return url
+        parsed = urlsplit(url)
+        inner_qs = parse_qs(parsed.query)
+        for k, vals in extras.items():
+            if not vals:
+                continue
+            inner_qs.setdefault(k, [])
+            inner_qs[k].extend(vals)
+        new_query = urlencode(inner_qs, doseq=True)
+        parsed = parsed._replace(query=new_query)
+        return urlunsplit(parsed)
 
     def _coerce_bool(self, payload: Mapping[str, Any], key: str) -> bool | None:
         """Accepts bool, 0/1, or typical truthy strings. Missing -> None."""
