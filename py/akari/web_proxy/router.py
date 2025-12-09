@@ -33,10 +33,6 @@ class WebRouter:
         self._logger = logging.getLogger(__name__)
         self._config = config
         remote = config.remote
-        self._udp_client_plain = AkariUdpClient((remote.host, remote.port), remote.psk, timeout=remote.timeout)
-        self._udp_client_enc = AkariUdpClient(
-            (remote.host, remote.port), remote.psk, timeout=remote.timeout, use_encryption=True
-        )
         self._message_lock = threading.Lock()
         self._message_counter = secrets.randbelow(0xFFFF) or 1
         self._static_dir = (static_dir or Path(__file__).with_name("static")).resolve()
@@ -169,9 +165,15 @@ class WebRouter:
                 return RouteResult(status_code=decision.status_code or 204, body=decision.body, headers=headers)
 
         try:
-            outcome = self._fetch_via_udp(target_url, use_encryption=use_encryption)
+            client = self._new_udp_client(use_encryption=use_encryption)
+            outcome = self._fetch_via_udp(target_url, use_encryption=use_encryption, udp_client=client)
         except ValueError as exc:
             return self._text_response(502, str(exc))
+        finally:
+            try:
+                client.close()
+            except Exception:
+                self._logger.warning("failed to close udp client", exc_info=True)
 
         self._logger.info(
             "udp outcome msg_id=0x%x nacks=%d retries=%d bytes_sent=%d bytes_recv=%d complete=%s timed_out=%s",
@@ -195,6 +197,15 @@ class WebRouter:
             return self._text_response(502, "レスポンスが揃いませんでした。")
 
         return self._raw_response(target_url, outcome, skip_filter=skip_filter, use_encryption=use_encryption)
+
+    def _new_udp_client(self, *, use_encryption: bool) -> AkariUdpClient:
+        remote = self._config.remote
+        return AkariUdpClient(
+            (remote.host, remote.port),
+            remote.psk,
+            timeout=remote.timeout,
+            use_encryption=use_encryption,
+        )
 
     # ------------------------------- response shaping -------------------------------
     def _raw_response(
@@ -454,13 +465,15 @@ class WebRouter:
             return body, False
 
     # ------------------------------- utilities -------------------------------
-    def _fetch_via_udp(self, url: str, *, use_encryption: bool = False) -> ResponseOutcome:
+    def _fetch_via_udp(
+        self, url: str, *, use_encryption: bool = False, udp_client: AkariUdpClient | None = None
+    ) -> ResponseOutcome:
         if not url.startswith(("http://", "https://")):
             raise ValueError("HTTP/HTTPS のみサポートします。")
         message_id = self._next_message_id()
         timestamp = int(time.time())
+        client = udp_client or self._new_udp_client(use_encryption=use_encryption)
         try:
-            client = self._udp_client_enc if use_encryption else self._udp_client_plain
             return client.send_request(url, message_id, timestamp)
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"AKARI-UDP リクエストに失敗: {exc}") from exc
