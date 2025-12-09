@@ -1,4 +1,6 @@
 // AKARI Web Proxy Service Worker
+const selfUrl = new URL(self.location.href);
+const encEnabled = selfUrl.searchParams.get("enc") === "1";
 const proxyBase = self.location.origin + "/";
 
 self.addEventListener("install", (event) => {
@@ -32,7 +34,8 @@ self.addEventListener("fetch", (event) => {
 
   // プロキシ経由に書き換え
   // クエリ付き URL をそのままパスに載せると outer query に食われるのでエンコードする
-  const proxiedUrl = proxyBase + encodeURIComponent(url);
+  let proxiedUrl = proxyBase + encodeURIComponent(url);
+  if (encEnabled) proxiedUrl += proxiedUrl.includes("?") ? "&enc=1" : "?enc=1";
   const newRequest = new Request(proxiedUrl, {
     method: req.method,
     headers: req.headers,

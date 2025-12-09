@@ -51,14 +51,14 @@ class WebRouter:
         if parsed.path == "/api/filter":
             return self._handle_filter_get()
         if parsed.path in ("/proxy", "/api/proxy"):
-            return self._handle_proxy(params, {}, {})
+            return self._handle_proxy(params, {}, {}, headers)
         if parsed.path in ("/", "", "/index.html"):
             static = self._serve_static_file(self._entry_file)
             if static:
                 return static
         if parsed.path == "/healthz":
             return RouteResult(status_code=200, body=b"ok", headers={"Content-Type": "text/plain; charset=utf-8"})
-        path_proxy = self._handle_path_proxy(parsed.path, params)
+        path_proxy = self._handle_path_proxy(parsed.path, params, headers)
         if path_proxy:
             return path_proxy
         static = self._serve_static_asset(parsed.path)
@@ -83,7 +83,7 @@ class WebRouter:
                 json_payload = {}
         if parsed.path in ("/", "/proxy", "/api/proxy"):
             query_params = parse_qs(parsed.query)
-            return self._handle_proxy(query_params, form_params, json_payload)
+            return self._handle_proxy(query_params, form_params, json_payload, headers)
         if parsed.path == "/api/filter":
             payload = json_payload or {k: v[0] for k, v in form_params.items() if v}
             return self._handle_filter_update(payload)
@@ -95,10 +95,14 @@ class WebRouter:
         query_params: Mapping[str, list[str]],
         form_params: Mapping[str, list[str]],
         json_payload: Mapping[str, Any],
+        headers: Mapping[str, str],
     ) -> RouteResult:
         raw_url = self._extract_url(form_params, json_payload, query_params)
         skip_filter = bool(query_params.get("entry"))
-        use_encryption = self._coerce_bool(query_params, "enc") or self._coerce_bool(query_params, "e") or False
+        use_encryption = self._coerce_bool(query_params, "enc") or self._coerce_bool(query_params, "e")
+        if use_encryption is None:
+            use_encryption = self._has_enc_cookie(headers)
+        use_encryption = bool(use_encryption)
         return self._execute_proxy(raw_url, skip_filter=skip_filter, use_encryption=use_encryption)
 
     def _handle_filter_get(self) -> RouteResult:
@@ -134,7 +138,7 @@ class WebRouter:
         }
         return self._json_response(200, payload)
 
-    def _handle_path_proxy(self, raw_path: str, params: Mapping[str, list[str]]) -> RouteResult | None:
+    def _handle_path_proxy(self, raw_path: str, params: Mapping[str, list[str]], headers: Mapping[str, str]) -> RouteResult | None:
         candidate = raw_path.lstrip("/")
         if not candidate:
             return None
@@ -142,7 +146,10 @@ class WebRouter:
         if not url.startswith(("http://", "https://")):
             return None
         skip_filter = bool(params.get("entry"))
-        use_encryption = self._coerce_bool(params, "enc") or self._coerce_bool(params, "e") or False
+        use_encryption = self._coerce_bool(params, "enc") or self._coerce_bool(params, "e")
+        if use_encryption is None:
+            use_encryption = self._has_enc_cookie(headers)
+        use_encryption = bool(use_encryption)
         merged_url = self._merge_outer_params_into_url(url, params)
         return self._execute_proxy(merged_url, skip_filter=skip_filter, use_encryption=use_encryption)
 
@@ -192,6 +199,8 @@ class WebRouter:
         if outcome.headers:
             for k, v in outcome.headers.items():
                 headers[k.title()] = v
+        if use_encryption and "Set-Cookie" not in headers:
+            headers["Set-Cookie"] = "akari_enc=1; Path=/; SameSite=Lax"
         # 転送後は必ず固定長で返すため Transfer-Encoding は落とす
         headers.pop("Transfer-Encoding", None)
         headers.pop("transfer-encoding", None)
@@ -300,10 +309,13 @@ class WebRouter:
 
         text = meta_refresh_pattern.sub(meta_refresh_repl, text)
 
+        sw_path = "/sw-akari.js"
+        if use_encryption:
+            sw_path += "?enc=1"
         registration_snippet = (
             '<script>(function(){'
             "if('serviceWorker' in navigator){"
-            "navigator.serviceWorker.register('/sw-akari.js',{scope:'/'}).catch(()=>{});"
+            f"navigator.serviceWorker.register('{sw_path}',{{scope:'/'}}).catch(()=>{{}});"
             "}"
             "})();</script>"
         )
@@ -377,6 +389,10 @@ class WebRouter:
                 sep = "&" if parsed.query else "?"
                 proxied = proxied + f"{sep}enc=1"
         return proxied
+
+    def _has_enc_cookie(self, headers: Mapping[str, str]) -> bool:
+        cookie = headers.get("cookie") or headers.get("Cookie") or ""
+        return "akari_enc=1" in cookie
 
     # ---------------------------------------------------------------------------
     # Strip security headers (CSP etc.)

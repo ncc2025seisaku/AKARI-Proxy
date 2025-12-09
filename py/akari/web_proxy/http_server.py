@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
@@ -17,7 +18,7 @@ class WebHttpServer:
         self._config = config
         self._router = router
         handler_cls = _make_handler(router)
-        self._server = ThreadingHTTPServer((config.listen_host, config.listen_port), handler_cls)
+        self._server = _QuietThreadingHTTPServer((config.listen_host, config.listen_port), handler_cls)
 
     def serve_forever(self) -> None:
         try:
@@ -69,3 +70,13 @@ def _make_handler(router: WebRouter) -> type[BaseHTTPRequestHandler]:
                 return
 
     return Handler
+
+
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Suppress noisy tracebacks for client-aborted connections."""
+
+    def handle_error(self, request, client_address) -> None:  # type: ignore[override]
+        _exc = sys.exc_info()[1]
+        if isinstance(_exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
