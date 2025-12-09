@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  test:
+    name: Run Rust + Python tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Create Python virtualenv
+        run: python -m venv .venv
+
+      - name: Install Python tooling
+        run: |
+          source .venv/bin/activate
+          python -m pip install --upgrade pip setuptools maturin pytest
+
+      - name: Run cargo tests
+        run: |
+          source .venv/bin/activate
+          cargo test --workspace
+
+      - name: Build Python bindings
+        working-directory: crates/akari_udp_py
+        run: |
+          source ../../.venv/bin/activate
+          maturin develop --release
+
+      - name: Run Python unit tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests

@@ -1,0 +1,19 @@
+[package]
+name = "akari_udp_py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for the AKARI-UDP core implementation."
+authors = ["akari-dev"]
+license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "akari_udp_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+akari_udp_core = { path = "../akari_udp_core" }
+pyo3 = { version = "0.20", features = ["extension-module", "auto-initialize"] }
+
+[build-dependencies]
+pyo3-build-config = { version = "0.20", features = ["resolve-config"] }
