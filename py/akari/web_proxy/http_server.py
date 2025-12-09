@@ -56,12 +56,16 @@ def _make_handler(router: WebRouter) -> type[BaseHTTPRequestHandler]:
                 self._send_response(response)
 
         def _send_response(self, result: RouteResult) -> None:
-            status = HTTPStatus(result.status_code)
-            self.send_response(status.value, status.phrase)
-            for key, value in result.headers.items():
-                self.send_header(key, value)
-            self.send_header("Content-Length", str(len(result.body)))
-            self.end_headers()
-            self.wfile.write(result.body)
+            try:
+                status = HTTPStatus(result.status_code)
+                self.send_response(status.value, status.phrase)
+                for key, value in result.headers.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", str(len(result.body)))
+                self.end_headers()
+                self.wfile.write(result.body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # クライアントが先に切断した場合は無視（ログ不要）
+                return
 
     return Handler
