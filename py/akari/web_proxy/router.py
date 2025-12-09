@@ -341,7 +341,31 @@ class WebRouter:
             "}"
             "})();</script>"
         )
-        text += registration_snippet
+        runtime_rewrite_snippet = (
+            "<script>(function(){"
+            "const proxy=location.origin+'/';"
+            "const enc=/[?&]enc=1(?:&|$)/.test(location.search)||document.cookie.includes('akari_enc=1');"
+            "let base=null;try{base=decodeURIComponent(location.pathname.slice(1));}catch(e){}"
+            "const invalid=/^(?:data:|javascript:|mailto:|#)/i;"
+            "function toProxy(u){"
+            "if(!u||invalid.test(u)||u.startsWith(proxy))return null;"
+            "if(u.startsWith('//'))u='https:'+u;"
+            "try{const abs=base?new URL(u,base).href:new URL(u).href;"
+            "let p=proxy+encodeURIComponent(abs);"
+            "if(enc&&p.indexOf('?')===-1)p+='?enc=1';"
+            "return p;}catch(e){return null;}"
+            "}"
+            "function rewrite(el,attr){const v=el.getAttribute(attr);const p=toProxy(v);if(p)el.setAttribute(attr,p);}"
+            "function scan(root){root.querySelectorAll('a[href],form[action],img[src],script[src],link[href],iframe[src]').forEach(el=>{rewrite(el,el.hasAttribute('href')?'href':'src');});}"
+            "function onClick(e){const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;const p=toProxy(a.getAttribute('href'));if(p){e.preventDefault();location.assign(p);}}"
+            "function onSubmit(e){const f=e.target.closest&&e.target.closest('form[action]');if(!f)return;const p=toProxy(f.getAttribute('action'));if(p)f.action=p;}"
+            "scan(document);"
+            "document.addEventListener('click',onClick,true);"
+            "document.addEventListener('submit',onSubmit,true);"
+            "new MutationObserver(ms=>{ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.nodeType===1)scan(n);}));}).observe(document.documentElement,{childList:true,subtree:true});"
+            "})();</script>"
+        )
+        text += registration_snippet + runtime_rewrite_snippet
 
         return text.encode("utf-8", errors="replace")
 

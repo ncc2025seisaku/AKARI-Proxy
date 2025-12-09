@@ -38,7 +38,7 @@ class WebRouterEncryptionTest(unittest.TestCase):
             )
             plain_client.send_request.return_value = dummy_outcome
             enc_client.send_request.return_value = dummy_outcome
-            mock_client_cls.side_effect = [plain_client, enc_client]
+            mock_client_cls.side_effect = lambda *args, **kwargs: enc_client if kwargs.get("use_encryption") else plain_client
 
             router = WebRouter(cfg)
             router._proxy_base = "http://localhost:8080/"  # avoid actual host diff
@@ -90,6 +90,16 @@ class WebRouterEncryptionTest(unittest.TestCase):
         rewritten = router._rewrite_html_to_proxy(html, "https://google.com/search?q=a").decode()
         self.assertIn('action="http://localhost:8080/https%3A%2F%2Fgoogle.com%2Fsearch"', rewritten)
         self.assertIn('url=http://localhost:8080/https%3A%2F%2Fgoogle.com%2Fconsent%3Fcontinue%3Dhttps%3A%2F%2Fgoogle.com%2Fsearch%3Fq%3Da', rewritten)
+
+    def test_html_injects_runtime_rewriter(self):
+        cfg = self._config()
+        router = WebRouter(cfg)
+        router._proxy_base = "http://localhost:8080/"
+        html = b"<html><body><a href=\"https://example.com/x\">x</a></body></html>"
+        rewritten = router._rewrite_html_to_proxy(html, "https://example.com/x", use_encryption=True).decode()
+        self.assertIn("MutationObserver", rewritten)
+        self.assertIn("location.origin+'/'", rewritten)
+        self.assertIn("?enc=1", rewritten)
 
     def test_outer_query_params_are_merged_into_target_url(self):
         cfg = self._config()
