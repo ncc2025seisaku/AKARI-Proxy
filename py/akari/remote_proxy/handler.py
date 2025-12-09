@@ -29,9 +29,13 @@ from .http_client import (
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MAX_DATAGRAM = 1200  # docs/AKARI.md: MTU 1200B 前提
-PROTO_OVERHEAD = 24 + 16  # fixed header + HMAC/AEAD tag
-SAFETY_MARGIN = 16  # 余白（将来拡張・計算ズレ吸収）
+# MTU 1200B を前提に「IP/UDPヘッダ + AKARIヘッダ + HMACタグ + ペイロード」が収まるようにする。
+# これまで PROTO_OVERHEAD のみを引いており、実際のワイヤサイズが 1200B を超えて断片化→ロス→NACK 多発していた。
+DEFAULT_MAX_DATAGRAM = 1150  # 1200B MTU想定から少し余裕を削って断片化を更に回避
+PROTO_OVERHEAD = 24 + 16  # AKARI 固定ヘッダ + HMAC/AEAD tag
+UDP_IP_OVERHEAD = 48  # IPv6 worst-case を前提にしてより保守的に
+SAFETY_MARGIN = 32  # 余白を拡大して計算ズレや NIC オフロード差分を吸収
+RESPONSE_FIRST_OVERHEAD = 8  # status(2) + hdr_len/0x0000(2) + body_len(4)
 FLAG_HAS_HEADER = 0x40
 FLAG_ENCRYPT = 0x80
 REQUIRE_ENCRYPTION = False
@@ -83,11 +87,18 @@ def _max_datagram_size(buffer_size: int | None) -> int:
 def _calc_payload_caps(buffer_size: int | None, header_block_len: int) -> tuple[int, int]:
     """先頭チャンク/後続チャンクの最大ペイロード長を計算する."""
 
-    max_dgram = _max_datagram_size(buffer_size)
-    base_cap = max(max_dgram - PROTO_OVERHEAD - SAFETY_MARGIN, 1)
+    base_cap = _payload_cap(buffer_size)
     cap_tail = base_cap
-    cap_first = max(base_cap - header_block_len, 1)
+    # 先頭チャンクは status/hdr_len/body_len の 8B 固定オーバーヘッドを差し引いた上でヘッダブロック長を考慮
+    # payload_first = 8 + header_block_len + chunk_first <= base_cap
+    cap_first = max(base_cap - RESPONSE_FIRST_OVERHEAD - header_block_len, 1)
     return cap_first, cap_tail
+
+
+def _payload_cap(buffer_size: int | None) -> int:
+    """ペイロードに割ける最大バイト数（seq>=1 のチャンク上限）"""
+    max_dgram = _max_datagram_size(buffer_size)
+    return max(max_dgram - UDP_IP_OVERHEAD - PROTO_OVERHEAD - SAFETY_MARGIN, 1)
 
 
 def _clone_response(response: HttpResponse) -> HttpResponse:
@@ -214,12 +225,97 @@ def encode_header_block(headers: dict[str, str]) -> bytes:
     return b"".join(_encode_header_items(headers))
 
 
+HEADERS_WHITELIST = {
+    "content-type",
+    "content-length",
+    "cache-control",
+    "etag",
+    "last-modified",
+    "date",
+    "server",
+    "content-encoding",
+    "accept-ranges",
+    "location",
+}
+
+
+def _shrink_headers(headers: dict[str, str], *, value_max: int = 256) -> dict[str, str]:
+    """ヘッダを安全な短い集合に縮約する。長すぎる値は切り詰める。"""
+    out: dict[str, str] = {}
+    for name, value in headers.items():
+        lname = name.lower()
+        if lname not in HEADERS_WHITELIST:
+            continue
+        vbytes = value.encode("utf-8", errors="replace")
+        if len(vbytes) > value_max:
+            vbytes = vbytes[:value_max]
+        out[lname] = vbytes.decode("utf-8", errors="replace")
+    return out
+
+
+def _encode_header_block_limited(headers: dict[str, str], cap: int) -> tuple[bytes, bool]:
+    """ヘッダブロックを cap バイト以内に収める。重要ヘッダ優先で詰め、超えたら残りを落とす。
+
+    戻り値: (block, truncated_flag)
+    """
+    normalized = {k.lower(): v for k, v in headers.items()}
+    priority = [
+        "content-type",
+        "content-length",
+        "cache-control",
+        "etag",
+        "last-modified",
+        "date",
+        "server",
+        "content-encoding",
+        "accept-ranges",
+        "location",
+    ]
+    block_headers: dict[str, str] = {}
+
+    # 優先ヘッダを先に詰める
+    for key in priority:
+        if key in normalized:
+            block_headers[key] = normalized.pop(key)
+
+    # 残りから大きい/不要なものを除外（Cookie 系は落とす）
+    for key in list(normalized.keys()):
+        if key in {"set-cookie", "cookie"}:
+            continue
+        block_headers[key] = normalized[key]
+
+    encoded = b""
+    truncated = False
+    for k, v in block_headers.items():
+        trial = encode_header_block({k: v})
+        if len(encoded) + len(trial) > cap:
+            truncated = True
+            break
+        encoded += trial
+
+    return encoded, truncated
+
+
 def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) -> Sequence[bytes]:
     body = response["body"]
     body_len = len(body)
     timestamp = _now_timestamp()
     buffer_size = getattr(request, "buffer_size", None)
-    header_block = encode_header_block(response["headers"])
+    base_cap = _payload_cap(buffer_size)
+    header_cap = max(base_cap - RESPONSE_FIRST_OVERHEAD - 64, 1)  # 先頭チャンクに 64B 余白を残す
+
+    # 1) ヘッダを白リスト・長さ上限で縮約
+    shrunk_headers = _shrink_headers(response["headers"])
+    # 2) cap に収める
+    header_block, truncated = _encode_header_block_limited(shrunk_headers, header_cap)
+    if truncated:
+        LOGGER.warning(
+            "header block truncated to %dB (cap=%dB) message_id=%s",
+            len(header_block),
+            header_cap,
+            request.header.get("message_id"),
+        )
+
     first_chunk, tail_chunks = _split_body(body, buffer_size=buffer_size, header_block_len=len(header_block))
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
