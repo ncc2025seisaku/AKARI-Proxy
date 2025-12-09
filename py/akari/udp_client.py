@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence, Tuple
@@ -174,6 +175,8 @@ class AkariUdpClient:
         self._sock_timeout = sock_timeout
         # seq_total が不明のまま先頭チャンクを待つ許容時間。超えたら捨てて再リクエスト。
         self._first_seq_timeout = max(0.0, float(first_seq_timeout)) if first_seq_timeout is not None else None
+        # 同一ソケットを複数スレッドで共有するとパケットを奪い合うため直列化用ロックを用意
+        self._lock = threading.Lock()
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
@@ -194,6 +197,20 @@ class AkariUdpClient:
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
         """Send a request and wait for resp/error. timeout=None means wait indefinitely."""
+
+        # ソケット共有によるパケット取り違えを防ぐため直列化
+        with self._lock:
+            return self._send_request_unlocked(url, message_id, timestamp, datagram=datagram)
+
+    def _send_request_unlocked(
+        self,
+        url: str,
+        message_id: int,
+        timestamp: int,
+        *,
+        datagram: bytes | None = None,
+    ) -> ResponseOutcome:
+        """Internal send; caller must hold _lock."""
 
         if datagram is None:
             flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
