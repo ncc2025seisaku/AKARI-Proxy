@@ -5,11 +5,20 @@ from __future__ import annotations
 import logging
 import time
 import threading
+import hmac
+import hashlib
 from typing import Iterable, Sequence
 
 from akari_udp_py import (
     encode_error_py,
     encode_error_v2_py,
+    encode_error_v3_py,
+    encode_nack_body_v3_py,
+    encode_nack_head_v3_py,
+    encode_resp_body_v3_py,
+    encode_resp_head_cont_v3_py,
+    encode_resp_head_v3_py,
+    encode_resp_body_v3_agg_py,
     encode_response_chunk_py,
     encode_response_chunk_v2_py,
     encode_response_first_chunk_py,
@@ -32,13 +41,17 @@ LOGGER = logging.getLogger(__name__)
 # MTU 1200B を前提に「IP/UDPヘッダ + AKARIヘッダ + HMACタグ + ペイロード」が収まるようにする。
 # これまで PROTO_OVERHEAD のみを引いており、実際のワイヤサイズが 1200B を超えて断片化→ロス→NACK 多発していた。
 DEFAULT_MAX_DATAGRAM = 1150  # 1200B MTU想定から少し余裕を削って断片化を更に回避
-PROTO_OVERHEAD = 24 + 16  # AKARI 固定ヘッダ + HMAC/AEAD tag
+PROTO_OVERHEAD = 24 + 16  # AKARI 固定ヘッダ + HMAC/AEAD tag (v2まで)
 UDP_IP_OVERHEAD = 48  # IPv6 worst-case を前提にしてより保守的に
 SAFETY_MARGIN = 32  # 余白を拡大して計算ズレや NIC オフロード差分を吸収
 RESPONSE_FIRST_OVERHEAD = 8  # status(2) + hdr_len/0x0000(2) + body_len(4)
 FLAG_HAS_HEADER = 0x40
 FLAG_ENCRYPT = 0x80
 REQUIRE_ENCRYPTION = False
+
+# v3 固定ヘッダ/タグ（短縮ヘッダ想定）
+V3_FIXED_HDR = 8  # magic(2)+ver/type/flags/res(2?) + short-id(2) + seq/seq_total/payload_len(6) ざっくり
+V3_TAG = 16  # aggregateでもタグ自体は1回
 
 
 def set_require_encryption(flag: bool) -> None:
@@ -74,20 +87,18 @@ def _now_timestamp() -> int:
     return int(time.time())
 
 
-def _max_datagram_size(buffer_size: int | None) -> int:
-    """送信可能な datagram 最大サイズを決める（MTU 1200B を上限）。
-
-    クライアント広告 buffer_size を優先し、それより大きくても 1200B でクリップ。
-    """
+def _max_datagram_size(buffer_size: int | None, payload_max: int | None = None) -> int:
+    """送信可能な datagram 最大サイズを決める（MTU 1200B を上限）。"""
+    cap = payload_max if payload_max and payload_max > 0 else DEFAULT_MAX_DATAGRAM
     if buffer_size and buffer_size > 0:
-        return min(buffer_size, DEFAULT_MAX_DATAGRAM)
-    return DEFAULT_MAX_DATAGRAM
+        return min(buffer_size, cap)
+    return cap
 
 
-def _calc_payload_caps(buffer_size: int | None, header_block_len: int) -> tuple[int, int]:
+def _calc_payload_caps(buffer_size: int | None, header_block_len: int, payload_max: int | None) -> tuple[int, int]:
     """先頭チャンク/後続チャンクの最大ペイロード長を計算する."""
 
-    base_cap = _payload_cap(buffer_size)
+    base_cap = _payload_cap(buffer_size, payload_max)
     cap_tail = base_cap
     # 先頭チャンクは status/hdr_len/body_len の 8B 固定オーバーヘッドを差し引いた上でヘッダブロック長を考慮
     # payload_first = 8 + header_block_len + chunk_first <= base_cap
@@ -95,9 +106,9 @@ def _calc_payload_caps(buffer_size: int | None, header_block_len: int) -> tuple[
     return cap_first, cap_tail
 
 
-def _payload_cap(buffer_size: int | None) -> int:
+def _payload_cap(buffer_size: int | None, payload_max: int | None) -> int:
     """ペイロードに割ける最大バイト数（seq>=1 のチャンク上限）"""
-    max_dgram = _max_datagram_size(buffer_size)
+    max_dgram = _max_datagram_size(buffer_size, payload_max)
     return max(max_dgram - UDP_IP_OVERHEAD - PROTO_OVERHEAD - SAFETY_MARGIN, 1)
 
 
@@ -171,8 +182,8 @@ def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | No
         _purge_http_cache(now=now)
 
 
-def _split_body(body: bytes, *, buffer_size: int | None, header_block_len: int) -> tuple[bytes, list[bytes]]:
-    cap_first, cap_tail = _calc_payload_caps(buffer_size, header_block_len)
+def _split_body(body: bytes, *, buffer_size: int | None, header_block_len: int, payload_max: int | None) -> tuple[bytes, list[bytes]]:
+    cap_first, cap_tail = _calc_payload_caps(buffer_size, header_block_len, payload_max)
 
     first_chunk = body[:cap_first]
     remaining = body[cap_first:]
@@ -301,7 +312,8 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     body_len = len(body)
     timestamp = _now_timestamp()
     buffer_size = getattr(request, "buffer_size", None)
-    base_cap = _payload_cap(buffer_size)
+    payload_max = getattr(request, "payload_max", None)
+    base_cap = _payload_cap(buffer_size, payload_max)
     header_cap = max(base_cap - RESPONSE_FIRST_OVERHEAD - 64, 1)  # 先頭チャンクに 64B 余白を残す
 
     # 1) ヘッダを白リスト・長さ上限で縮約
@@ -316,7 +328,7 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
             request.header.get("message_id"),
         )
 
-    first_chunk, tail_chunks = _split_body(body, buffer_size=buffer_size, header_block_len=len(header_block))
+    first_chunk, tail_chunks = _split_body(body, buffer_size=buffer_size, header_block_len=len(header_block), payload_max=payload_max)
     seq_total = max(1, 1 + len(tail_chunks))
     message_id = request.header["message_id"]
     version = int(request.header.get("version", 1))
@@ -324,8 +336,18 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     if request.header.get("flags", 0) & FLAG_ENCRYPT:
         flags |= FLAG_ENCRYPT
 
-    if version >= 2:
-        datagrams: list[bytes] = [
+    if version >= 3:
+        datagrams = _encode_success_datagrams_v3(
+            request,
+            response,
+            header_block=header_block,
+            body_len=body_len,
+            first_chunk=first_chunk,
+            tail_chunks=tail_chunks,
+            seq_total=seq_total,
+        )
+    elif version >= 2:
+        datagrams = [
             encode_response_first_chunk_v2_py(
                 response["status_code"],
                 body_len,
@@ -338,6 +360,18 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                 request.psk,
             )
         ]
+        for index, chunk in enumerate(tail_chunks, start=1):
+            datagrams.append(
+                encode_response_chunk_v2_py(
+                    chunk,
+                    message_id,
+                    index,
+                    seq_total,
+                    flags,
+                    timestamp,
+                    request.psk,
+                )
+            )
     else:
         datagrams = [
             encode_response_first_chunk_py(
@@ -350,21 +384,7 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
                 request.psk,
             )
         ]
-
-    for index, chunk in enumerate(tail_chunks, start=1):
-        if version >= 2:
-            datagrams.append(
-                encode_response_chunk_v2_py(
-                    chunk,
-                    message_id,
-                    index,
-                    seq_total,
-                    flags,
-                    timestamp,
-                    request.psk,
-                )
-            )
-        else:
+        for index, chunk in enumerate(tail_chunks, start=1):
             datagrams.append(
                 encode_response_chunk_py(
                     chunk,
@@ -405,6 +425,93 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     return datagrams
 
 
+def _encode_success_datagrams_v3(
+    request: IncomingRequest,
+    response: HttpResponse,
+    *,
+    header_block: bytes,
+    body_len: int,
+    first_chunk: bytes,
+    tail_chunks: list[bytes],
+    seq_total: int,
+) -> list[bytes]:
+    """v3レスポンスを組み立てる（現状はパケットごとタグ、集約タグは後続）。"""
+    flags = 0x40  # agg-tag要望フラグ（サーバ非対応でも無害）
+    encrypt = (request.header.get("flags", 0) & FLAG_ENCRYPT) != 0
+    if encrypt:
+        flags |= FLAG_ENCRYPT
+    message_id = request.header["message_id"]
+    payload_max = getattr(request, "payload_max", None)
+    buffer_size = getattr(request, "buffer_size", None)
+
+    # ヘッダ分割（capは先頭チャンクを想定し、固定8Bくらいを引く簡易計算）
+    base_cap = _payload_cap(buffer_size, payload_max)
+    cap_header = max(base_cap - 8, 1)
+    hdr_chunks_list = [header_block[i : i + cap_header] for i in range(0, len(header_block), cap_header)] or [b""]
+    hdr_chunks_count = len(hdr_chunks_list)
+
+    datagrams: list[bytes] = []
+    # ヘッダ最初のチャンク
+    datagrams.append(
+        encode_resp_head_v3_py(
+            response["status_code"],
+            hdr_chunks_list[0],
+            body_len,
+            hdr_chunks_count,
+            0,
+            seq_total,
+            flags,
+            message_id,
+            request.psk,
+        )
+    )
+    # 継続ヘッダ
+    for idx, hdr_chunk in enumerate(hdr_chunks_list[1:], start=1):
+        datagrams.append(
+            encode_resp_head_cont_v3_py(
+                hdr_chunk,
+                idx,
+                hdr_chunks_count,
+                flags,
+                message_id,
+                request.psk,
+            )
+        )
+    body_chunks = [first_chunk] + tail_chunks
+    if not encrypt and (flags & 0x40):
+        # aggregateタグを計算（ボディ平文でHMAC-SHA256の先頭16B）
+        agg_tag = hmac.new(request.psk, b"".join(body_chunks), hashlib.sha256).digest()[:16]
+        for idx, chunk in enumerate(body_chunks):
+            is_last = idx == len(body_chunks) - 1
+            datagrams.append(
+                encode_resp_body_v3_agg_py(
+                    chunk,
+                    idx,
+                    seq_total,
+                    flags,
+                    message_id,
+                    agg_tag if is_last else None,
+                    request.psk,
+                )
+            )
+    else:
+        for idx, chunk in enumerate(body_chunks):
+            datagrams.append(
+                encode_resp_body_v3_py(
+                    chunk,
+                    idx,
+                    seq_total,
+                    flags,
+                    message_id,
+                    request.psk,
+                )
+            )
+    with RESP_CACHE_LOCK:
+        RESP_CACHE[message_id] = (time.time(), datagrams)
+        _purge_resp_cache()
+    return datagrams
+
+
 def _encode_error(
     request: IncomingRequest,
     *,
@@ -422,7 +529,16 @@ def _encode_error(
         safe_message,
     )
     version = int(request.header.get("version", 1))
-    if version >= 2:
+    if version >= 3:
+        datagram = encode_error_v3_py(
+            safe_message,
+            error_code,
+            http_status,
+            request.header["message_id"],
+            0,
+            request.psk,
+        )
+    elif version >= 2:
         datagram = encode_error_v2_py(
             error_code,
             http_status,
@@ -454,11 +570,14 @@ def _handle_nack(request: IncomingRequest) -> Sequence[bytes]:
     seqs = _bitmap_to_seq(bitmap)
     ts, cached = RESP_CACHE.get(message_id, (0.0, []))
     to_resend: list[bytes] = []
+    # v3のbody NACKは body seq を指す。キャッシュの0番目はヘッダなので +1 でずらす。
+    offset = 1 if request.packet_type == "nack-body" else 0
     for seq in seqs:
-        if 0 <= seq < len(cached):
-            to_resend.append(cached[seq])
+        idx = seq + offset
+        if 0 <= idx < len(cached):
+            to_resend.append(cached[idx])
     if to_resend:
-        LOGGER.info("NACK resend message_id=%s seqs=%s", message_id, seqs)
+        LOGGER.info("NACK resend message_id=%s seqs=%s offset=%s", message_id, seqs, offset)
     return to_resend
 
 
@@ -518,7 +637,7 @@ def handle_request(request: IncomingRequest) -> Sequence[bytes]:
             message="encryption required (set E flag)",
         )
 
-    if request.packet_type == "nack":
+    if request.packet_type in {"nack", "nack-body", "nack-head"}:
         return _handle_nack(request)
     if request.packet_type == "ack":
         return _handle_ack(request)
@@ -620,7 +739,7 @@ async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
             message="encryption required (set E flag)",
         )
 
-    if request.packet_type == "nack":
+    if request.packet_type in {"nack", "nack-body", "nack-head"}:
         return _handle_nack(request)
     if request.packet_type == "ack":
         return _handle_ack(request)

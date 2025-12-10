@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from akari_udp_py import (
-    decode_packet_py,
+    decode_packet_auto_py,
     encode_error_py,
     encode_error_v2_py,
     encode_response_first_chunk_py,
@@ -29,7 +29,7 @@ class IncomingRequest:
     datagram: bytes
     psk: bytes
     buffer_size: int = 65535
-    buffer_size: int
+    payload_max: int | None = None
 
 
 class AkariUdpServer:
@@ -47,10 +47,12 @@ class AkariUdpServer:
         *,
         timeout: float | None = None,
         buffer_size: int = 65535,
+        payload_max: int | None = None,
     ) -> None:
         self._psk = psk
         self._handler = handler
         self.buffer_size = buffer_size
+        self.payload_max = payload_max
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
         if os.name == "nt":
@@ -74,7 +76,7 @@ class AkariUdpServer:
         except socket.timeout:
             return None
 
-        parsed = decode_packet_py(data, self._psk)
+        parsed = decode_packet_auto_py(data, self._psk)
         request = IncomingRequest(
             header=parsed["header"],
             payload=parsed["payload"],
@@ -84,6 +86,7 @@ class AkariUdpServer:
             datagram=data,
             psk=self._psk,
             buffer_size=self.buffer_size,
+            payload_max=self.payload_max,
         )
 
         for datagram in self._handler(request):

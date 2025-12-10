@@ -204,6 +204,7 @@ class WebRouter:
             (remote.host, remote.port),
             remote.psk,
             timeout=remote.timeout,
+            protocol_version=remote.protocol_version,
             use_encryption=use_encryption,
         )
 

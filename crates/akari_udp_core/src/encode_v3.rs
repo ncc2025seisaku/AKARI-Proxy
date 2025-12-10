@@ -4,7 +4,7 @@ use crate::header_v3::{HeaderV3, PacketTypeV3, FLAG_ENCRYPT, FLAG_SHORT_LEN};
 use crate::hmac::{compute_tag, TAG_LEN};
 use crate::payload::RequestMethod;
 
-fn finalize_packet(header: &HeaderV3, payload: &[u8], psk: &[u8]) -> Result<Vec<u8>, AkariError> {
+fn finalize_packet(header: &HeaderV3, payload: &[u8], psk: &[u8], include_tag: bool) -> Result<Vec<u8>, AkariError> {
     if payload.len() != header.payload_len as usize {
         return Err(AkariError::InvalidPacketLength {
             expected: header.payload_len as usize,
@@ -13,16 +13,19 @@ fn finalize_packet(header: &HeaderV3, payload: &[u8], psk: &[u8]) -> Result<Vec<
     }
     let encrypt = header.flags & FLAG_ENCRYPT != 0;
     let header_bytes = header.to_bytes();
-    let mut buf = Vec::with_capacity(header_bytes.len() + payload.len() + TAG_LEN);
+    let mut buf = Vec::with_capacity(header_bytes.len() + payload.len() + if include_tag { TAG_LEN } else { 0 });
     buf.extend_from_slice(&header_bytes);
     if encrypt {
         let (ciphertext, tag) = encrypt_payload_v3(psk, header, payload, &header_bytes)?;
         buf.extend_from_slice(&ciphertext);
         buf.extend_from_slice(&tag);
-    } else {
+    } else if include_tag {
         buf.extend_from_slice(payload);
         let tag = compute_tag(psk, &buf)?;
         buf.extend_from_slice(&tag);
+    } else {
+        // aggregate-tagなどタグ省略モード（非暗号化専用）
+        buf.extend_from_slice(payload);
     }
     Ok(buf)
 }
@@ -53,7 +56,7 @@ pub fn encode_request_v3(
     payload.extend_from_slice(&(header_block.len() as u16).to_be_bytes());
     payload.extend_from_slice(url_bytes);
     payload.extend_from_slice(header_block);
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, true)
 }
 
 // ------------ Response Head ------------
@@ -90,7 +93,7 @@ pub fn encode_resp_head_v3(
         seq_total: seq_total_body,
         payload_len: payload.len() as u16,
     };
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, true)
 }
 
 pub fn encode_resp_head_cont_v3(
@@ -113,7 +116,7 @@ pub fn encode_resp_head_cont_v3(
         seq_total: 0,      // unused
         payload_len: payload.len() as u16,
     };
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, flags & FLAG_ENCRYPT != 0)
 }
 
 pub fn encode_resp_body_v3(
@@ -133,7 +136,35 @@ pub fn encode_resp_body_v3(
         seq_total,
         payload_len: payload_len as u16,
     };
-    finalize_packet(&header, body_chunk, psk)
+    finalize_packet(&header, body_chunk, psk, true)
+}
+
+/// aggregate-tag 用。非暗号化を想定し、include_tag=false でパケット個別タグを付けない。
+pub fn encode_resp_body_v3_agg(
+    body_chunk: &[u8],
+    seq: u16,
+    seq_total: u16,
+    flags: u8,
+    message_id: u64,
+    psk: &[u8],
+    agg_tag: Option<&[u8]>,
+) -> Result<Vec<u8>, AkariError> {
+    let payload_len = body_chunk.len() + agg_tag.map(|t| t.len()).unwrap_or(0);
+    let header = HeaderV3 {
+        packet_type: PacketTypeV3::RespBody,
+        flags,
+        message_id,
+        seq,
+        seq_total,
+        payload_len: payload_len as u16,
+    };
+    let mut payload = Vec::with_capacity(payload_len);
+    payload.extend_from_slice(body_chunk);
+    if let Some(tag) = agg_tag {
+        payload.extend_from_slice(tag);
+    }
+    let include_tag = flags & FLAG_ENCRYPT != 0; // 暗号化時は従来どおり per-packet タグを付ける
+    finalize_packet(&header, &payload, psk, include_tag)
 }
 
 // ------------ NACKs ------------
@@ -149,7 +180,7 @@ pub fn encode_nack_head_v3(bitmap: &[u8], message_id: u64, flags: u8, psk: &[u8]
         seq_total: 1,
         payload_len: payload.len() as u16,
     };
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, true)
 }
 
 pub fn encode_nack_body_v3(bitmap: &[u8], message_id: u64, flags: u8, psk: &[u8]) -> Result<Vec<u8>, AkariError> {
@@ -164,7 +195,7 @@ pub fn encode_nack_body_v3(bitmap: &[u8], message_id: u64, flags: u8, psk: &[u8]
         seq_total: 1,
         payload_len: payload.len() as u16,
     };
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, true)
 }
 
 // ------------ Error ------------
@@ -183,7 +214,7 @@ pub fn encode_error_v3(message: &str, code: u8, http_status: u16, message_id: u6
         seq_total: 1,
         payload_len: payload_len as u16,
     };
-    finalize_packet(&header, &payload, psk)
+    finalize_packet(&header, &payload, psk, true)
 }
 
 // helper to compute max chunk size given MTU (payload part only)

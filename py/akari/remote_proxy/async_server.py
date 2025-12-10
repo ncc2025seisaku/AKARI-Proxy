@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence, Callable, Awaitable
 
-from akari_udp_py import decode_packet_py
+from akari_udp_py import decode_packet_auto_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
@@ -93,9 +93,11 @@ async def _process_datagram(
     *,
     psk: bytes,
     handler: Callable[[IncomingRequest], Awaitable[Sequence[bytes]]],
+    payload_max: int | None = None,
+    buffer_size: int | None = None,
 ) -> Sequence[bytes] | None:
     try:
-        parsed = decode_packet_py(data, psk)
+        parsed = decode_packet_auto_py(data, psk)
     except ValueError as exc:
         message = str(exc) or exc.__class__.__name__
         if message in {"HMAC mismatch", "invalid PSK"}:
@@ -116,6 +118,8 @@ async def _process_datagram(
             parsed=parsed,
             datagram=data,
             psk=psk,
+            buffer_size=buffer_size or 65535,
+            payload_max=payload_max,
         )
         LOGGER.debug(
             "decoded packet type=%s msg=%s ver=%s from=%s",
@@ -135,6 +139,11 @@ async def serve_remote_proxy_async(
     port: int,
     *,
     psk: bytes,
+    protocol_version: int = 2,
+    agg_tag: bool = True,
+    payload_max: int = 1200,
+    df: bool = True,
+    plpmtud: bool = False,
     buffer_size: int = DEFAULT_RCVBUF,
     session_pool_size: int = DEFAULT_SESSION_POOL_SIZE,
     logger: logging.Logger | None = None,
@@ -183,7 +192,14 @@ async def serve_remote_proxy_async(
     set_fetch_async_func(pooled_fetch_async)
 
     async def handle_and_send(data: bytes, addr) -> None:
-        datagrams = await _process_datagram(data, addr, psk=psk, handler=handle_request_async)
+        datagrams = await _process_datagram(
+            data,
+            addr,
+            psk=psk,
+            handler=handle_request_async,
+            payload_max=payload_max,
+            buffer_size=buffer_size,
+        )
         if not datagrams:
             return
         for dg in datagrams:
@@ -254,6 +270,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             config.host,
             config.port,
             psk=config.psk,
+            protocol_version=config.protocol_version,
+            agg_tag=config.agg_tag,
+            payload_max=config.payload_max,
+            df=config.df,
+            plpmtud=config.plpmtud,
             buffer_size=config.buffer_size,
             session_pool_size=DEFAULT_SESSION_POOL_SIZE,
             request_timeout=config.timeout or DEFAULT_TIMEOUT,

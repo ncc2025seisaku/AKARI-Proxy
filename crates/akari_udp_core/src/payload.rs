@@ -73,6 +73,7 @@ pub struct RespBodyPayloadV3 {
     pub seq: u16,
     pub seq_total: u16,
     pub chunk: Vec<u8>,
+    pub agg_tag: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

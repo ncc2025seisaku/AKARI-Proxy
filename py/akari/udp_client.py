@@ -19,6 +19,8 @@ from akari_udp_py import (
     encode_request_v2_py,
     encode_request_v3_py,
 )
+import hmac
+import hashlib
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ class ResponseAccumulator:
     # v3 header chunks
     hdr_chunks: dict[int, bytes] = field(default_factory=dict)
     hdr_total: int | None = None
+    agg_tag: bytes | None = None
 
     def add_chunk_v2(self, packet: Mapping[str, Any]) -> None:
         header = packet["header"]
@@ -84,6 +87,8 @@ class ResponseAccumulator:
         seq_total = payload.get("seq_total") or header.get("seq_total")
         if seq_total is not None:
             self.seq_total = seq_total
+        if payload.get("agg_tag") is not None:
+            self.agg_tag = bytes(payload["agg_tag"])
 
     @property
     def header_complete(self) -> bool:
@@ -269,6 +274,7 @@ class AkariUdpClient:
         bytes_received = 0
         acks_sent = 0
         first_seq_deadline: float | None = None
+        agg_mode = False
 
         sock = self._sock
         sock.sendto(datagram, self._remote_addr)
@@ -377,6 +383,9 @@ class AkariUdpClient:
             packets.append(native)
             last_activity = time.monotonic()
             payload = native.get("payload", {})
+            header_flags = native.get("header", {}).get("flags", 0)
+            if header_flags & 0x40 and not (header_flags & 0x80):
+                agg_mode = True
             chunk = payload.get("chunk")
             chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
             LOGGER.info(
@@ -480,6 +489,14 @@ class AkariUdpClient:
                 break
 
         body = accumulator.assembled_body() if accumulator.complete else None
+        # 集約タグ検証（非暗号化のみ想定）
+        if agg_mode and accumulator.complete and body is not None:
+            if accumulator.agg_tag is None:
+                error_payload = {"message": "aggregate tag missing"}
+            else:
+                calc_tag = hmac.new(self._psk, body, hashlib.sha256).digest()[:16]
+                if calc_tag != accumulator.agg_tag:
+                    error_payload = {"message": "aggregate tag mismatch"}
         return ResponseOutcome(
             message_id=message_id,
             packets=packets,

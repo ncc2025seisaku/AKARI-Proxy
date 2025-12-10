@@ -19,6 +19,11 @@ class RemoteProxyConfig:
     log_level: str
     psk: bytes
     require_encryption: bool
+    protocol_version: int
+    agg_tag: bool
+    payload_max: int
+    df: bool
+    plpmtud: bool
 
 
 class ConfigError(ValueError):
@@ -36,6 +41,11 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
     log_level = _require_str(server_data, "log_level", default="INFO").upper()
     psk = _resolve_psk(server_data, base_dir=Path(path).resolve().parent)
     require_encryption = _require_bool(server_data, "require_encryption", default=False)
+    protocol_version = int(server_data.get("protocol_version", 2))
+    agg_tag = _require_bool(server_data, "agg_tag", default=True)
+    payload_max = int(server_data.get("payload_max", 1200))
+    df = _require_bool(server_data, "df", default=True)
+    plpmtud = _require_bool(server_data, "plpmtud", default=False)
 
     return RemoteProxyConfig(
         host=host,
@@ -45,6 +55,11 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
         log_level=log_level,
         psk=psk,
         require_encryption=require_encryption,
+        protocol_version=protocol_version,
+        agg_tag=agg_tag,
+        payload_max=payload_max,
+        df=df,
+        plpmtud=plpmtud,
     )
 
 

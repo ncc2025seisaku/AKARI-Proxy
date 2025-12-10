@@ -9,6 +9,11 @@ buffer_size = 1048576
 log_level = "INFO"
 # E フラグが無いリクエストを拒否したい場合は true にする
 require_encryption = false
+protocol_version = 3
+agg_tag = true
+payload_max = 1200
+df = true
+plpmtud = false
 
 # プレーンテキスト PSK（テスト用）
 psk = "test-psk-0000-test"

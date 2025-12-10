@@ -11,9 +11,9 @@ use std::convert::TryInto;
 const REQUEST_OVERHEAD: usize = 1 + 2 + 2; // method + url_len + hdr_len
 
 pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, AkariError> {
-    if datagram.len() < HeaderV3::FIXED_LEN + TAG_LEN {
+    if datagram.len() < HeaderV3::FIXED_LEN {
         return Err(AkariError::InvalidPacketLength {
-            expected: HeaderV3::FIXED_LEN + TAG_LEN,
+            expected: HeaderV3::FIXED_LEN,
             actual: datagram.len(),
         });
     }
@@ -27,7 +27,8 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
         });
     }
     let payload_len = header.payload_len as usize;
-    let expected_len = header_len + payload_len + TAG_LEN;
+    let agg_mode = (header.flags & crate::header_v3::FLAG_AGG_TAG != 0) && (header.flags & crate::header_v3::FLAG_ENCRYPT == 0);
+    let expected_len = header_len + payload_len + if agg_mode { 0 } else { TAG_LEN };
     if datagram.len() != expected_len {
         return Err(AkariError::InvalidPacketLength {
             expected: expected_len,
@@ -35,17 +36,20 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
         });
     }
     let payload = &datagram[header_len..header_len + payload_len];
-    let tag_bytes = &datagram[header_len + payload_len..];
+    let tag_bytes = if agg_mode { &[][..] } else { &datagram[header_len + payload_len..] };
 
     let header_bytes = &datagram[..header_len];
     let encrypt = header.flags & crate::header_v3::FLAG_ENCRYPT != 0;
     let plain_payload = if encrypt {
         decrypt_payload_v3(psk, &header, payload, tag_bytes, header_bytes)?
-    } else {
+    } else if !agg_mode {
         let computed_tag = compute_tag(psk, &datagram[..header_len + payload_len])?;
         if computed_tag.as_slice() != tag_bytes {
             return Err(AkariError::HmacMismatch);
         }
+        payload.to_vec()
+    } else {
+        // aggregate-tag モード（タグは後段で検証する）
         payload.to_vec()
     };
 
@@ -138,11 +142,26 @@ fn decode_resp_head_cont(payload: &[u8]) -> Result<PayloadV3, AkariError> {
 }
 
 fn decode_resp_body(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    Ok(PayloadV3::RespBody(RespBodyPayloadV3 {
-        seq: header.seq,
-        seq_total: header.seq_total,
-        chunk: payload.to_vec(),
-    }))
+    let agg_mode = header.flags & crate::header_v3::FLAG_AGG_TAG != 0 && header.flags & crate::header_v3::FLAG_ENCRYPT == 0;
+    if agg_mode && header.seq_total > 0 && header.seq == header.seq_total - 1 {
+        if payload.len() < TAG_LEN {
+            return Err(AkariError::MissingPayload);
+        }
+        let split = payload.len() - TAG_LEN;
+        Ok(PayloadV3::RespBody(RespBodyPayloadV3 {
+            seq: header.seq,
+            seq_total: header.seq_total,
+            chunk: payload[..split].to_vec(),
+            agg_tag: Some(payload[split..].to_vec()),
+        }))
+    } else {
+        Ok(PayloadV3::RespBody(RespBodyPayloadV3 {
+            seq: header.seq,
+            seq_total: header.seq_total,
+            chunk: payload.to_vec(),
+            agg_tag: None,
+        }))
+    }
 }
 
 fn decode_nack(payload: &[u8]) -> Result<NackPayloadV3, AkariError> {

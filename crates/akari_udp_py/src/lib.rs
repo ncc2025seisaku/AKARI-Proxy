@@ -3,6 +3,7 @@ use akari_udp_core::{
     encode_nack_v2, encode_request, encode_request_v2, encode_resp_body_v3, encode_resp_head_cont_v3,
     encode_resp_head_v3, encode_response_chunk, encode_response_chunk_v2, encode_response_first_chunk,
     encode_response_first_chunk_v2, encode_error_v3, encode_nack_body_v3, encode_nack_head_v3, encode_request_v3,
+    encode_resp_body_v3_agg,
     AkariError, Header, HeaderV3, MessageType, PacketTypeV3, Payload, PayloadV3, RequestMethod, ResponseChunk,
 };
 use pyo3::exceptions::PyValueError;
@@ -137,6 +138,9 @@ fn payload_v3_to_dict<'py>(py: Python<'py>, payload: &PayloadV3) -> PyResult<(&'
             dict.set_item("seq", b.seq)?;
             dict.set_item("seq_total", b.seq_total)?;
             dict.set_item("chunk", PyBytes::new(py, &b.chunk))?;
+            if let Some(tag) = &b.agg_tag {
+                dict.set_item("agg_tag", PyBytes::new(py, tag))?;
+            }
             Ok(("resp-body", dict))
         }
         PayloadV3::NackHead(n) => {
@@ -395,6 +399,22 @@ fn encode_resp_body_v3_py(
 }
 
 #[pyfunction]
+#[pyo3(signature = (body_chunk, seq, seq_total, flags, message_id, psk, agg_tag=None))]
+fn encode_resp_body_v3_agg_py(
+    py: Python,
+    body_chunk: &[u8],
+    seq: u16,
+    seq_total: u16,
+    flags: u8,
+    message_id: u64,
+    psk: &[u8],
+    agg_tag: Option<&[u8]>,
+) -> PyResult<Py<PyBytes>> {
+    let datagram = encode_resp_body_v3_agg(body_chunk, seq, seq_total, flags, message_id, psk, agg_tag).map_err(map_error)?;
+    Ok(PyBytes::new(py, &datagram).into())
+}
+
+#[pyfunction]
 fn encode_nack_head_v3_py(py: Python, bitmap: &[u8], message_id: u64, flags: u8, psk: &[u8]) -> PyResult<Py<PyBytes>> {
     let datagram = encode_nack_head_v3(bitmap, message_id, flags, psk).map_err(map_error)?;
     Ok(PyBytes::new(py, &datagram).into())
@@ -475,6 +495,7 @@ fn akari_udp_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_resp_head_v3_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_resp_head_cont_v3_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_resp_body_v3_py, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_resp_body_v3_agg_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_nack_head_v3_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_nack_body_v3_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_error_v3_py, m)?)?;

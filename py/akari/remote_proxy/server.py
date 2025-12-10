@@ -25,6 +25,7 @@ def serve_remote_proxy(
     psk: bytes,
     timeout: float | None = None,
     buffer_size: int = 65535,
+    payload_max: int | None = None,
     require_encryption: bool = False,
     logger: logging.Logger | None = None,
 ) -> None:
@@ -32,7 +33,15 @@ def serve_remote_proxy(
 
     logger = logger or LOGGER
     set_require_encryption(require_encryption)
-    with AkariUdpServer(host, port, psk, handle_request, timeout=timeout, buffer_size=buffer_size) as server:
+    with AkariUdpServer(
+        host,
+        port,
+        psk,
+        handle_request,
+        timeout=timeout,
+        buffer_size=buffer_size,
+        payload_max=payload_max,
+    ) as server:
         logger.info("AKARI remote proxy listening on %s:%s", *server.address)
         while True:
             try:
@@ -63,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--hex", action="store_true", help="interpret --psk as hex string")
     parser.add_argument("--timeout", type=float, help="socket timeout for recvfrom")
     parser.add_argument("--buffer-size", type=int, default=65535, help="UDP receive buffer size")
+    parser.add_argument("--payload-max", type=int, help="maximum UDP datagram size for payload splitting")
     parser.add_argument("--require-encryption", action="store_true", help="reject requests without E flag")
     parser.add_argument("--log-level", default="INFO", help="logging level (INFO/DEBUG/...)")
     args = parser.parse_args(argv)
@@ -75,6 +85,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         psk=psk,
         timeout=args.timeout,
         buffer_size=args.buffer_size,
+        payload_max=args.payload_max,
         require_encryption=args.require_encryption,
         logger=logging.getLogger("akari.remote_proxy.server"),
     )

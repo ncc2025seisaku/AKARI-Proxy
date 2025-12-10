@@ -209,6 +209,9 @@ def fetch_udp_with_count(
     message_id: int | None = None,
     timeout_override: float | None = None,
     initial_request_retries: int = 1,
+    protocol_version_override: int | None = None,
+    agg_tag: bool = False,
+    df: bool | None = None,
 ) -> TrafficSample:
     """AKARI-UDP 経由で取得し、送受信バイト数を計測."""
     remote = config.remote
@@ -228,7 +231,10 @@ def fetch_udp_with_count(
         max_nack_rounds=None,  # 無制限に NACK を送って欠損を埋める
         max_ack_rounds=0,  # ACKは送らず、欠損はNACKでのみ通知
         use_encryption=use_encryption,
+        protocol_version=protocol_version_override or getattr(remote, "protocol_version", 2),
         initial_request_retries=initial_request_retries,
+        agg_tag=agg_tag,
+        df=df if df is not None else getattr(remote, "df", True),
     )
     mid = message_id or (secrets.randbelow(0xFFFF) or 1)
     ts = int(time.time())
@@ -304,6 +310,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--enc", action="store_true", help="AKARI-UDP で暗号化フラグを立てて計測")
     parser.add_argument("--udp-timeout", type=float, default=None, help="AKARI-UDP 側のタイムアウト秒数（config の値を上書き）")
     parser.add_argument("--udp-retries", type=int, default=1, help="AKARI-UDP リクエスト初回再送回数")
+    parser.add_argument("--udp-version", type=int, default=None, help="AKARI-UDP プロトコルバージョン (1/2/3)。未指定なら config を使用")
+    parser.add_argument("--agg-tag", action="store_true", help="v3の集約タグフラグを立てる（将来実装用、現状はフラグのみ）")
+    parser.add_argument("--df-off", action="store_true", help="DF (Don't Fragment) を無効化したい場合に指定（将来実装用、現状はフラグのみ）")
     parser.add_argument("--log-level", default=os.environ.get("AKARI_COMPARE_LOG_LEVEL", "INFO"), help="ログレベル (DEBUG/INFO/...)")
     return parser.parse_args()
 
@@ -336,6 +345,9 @@ def main() -> None:
         use_encryption=args.enc,
         timeout_override=args.udp_timeout,
         initial_request_retries=args.udp_retries,
+        protocol_version_override=args.udp_version,
+        agg_tag=args.agg_tag,
+        df=not args.df_off,
     )
     print_summary(https_sample, udp_sample, body_limit=args.max_body_bytes)
 

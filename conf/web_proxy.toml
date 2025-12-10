@@ -17,6 +17,11 @@ port = 9000
 psk = "test-psk-0000-test"
 psk_hex = false
 timeout = 10.0
+protocol_version = 3
+agg_tag = true
+payload_max = 1200
+df = true
+plpmtud = false
 
 [content_filter]
 enable_js = true

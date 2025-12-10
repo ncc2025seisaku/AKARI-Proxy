@@ -22,6 +22,11 @@ class RemoteProxyConfig:
     port: int
     psk: bytes
     timeout: float
+    protocol_version: int
+    agg_tag: bool
+    payload_max: int
+    df: bool
+    plpmtud: bool
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,11 @@ def load_config(path: str | Path) -> WebProxyConfig:
         port=_require_port(remote_data, "port", default=9000),
         psk=_parse_psk(remote_data),
         timeout=_require_float(remote_data, "timeout", default=2.0),
+        protocol_version=int(remote_data.get("protocol_version", 2)),
+        agg_tag=_require_bool(remote_data, "agg_tag", default=True),
+        payload_max=int(remote_data.get("payload_max", 1200)),
+        df=_require_bool(remote_data, "df", default=True),
+        plpmtud=_require_bool(remote_data, "plpmtud", default=False),
     )
 
     filter_data = data.get("content_filter", {})

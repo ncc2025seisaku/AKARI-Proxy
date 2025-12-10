@@ -20,6 +20,7 @@ pub use crate::encode::{
 pub use crate::encode_v3::{
     encode_error_v3, encode_nack_body_v3, encode_nack_head_v3, encode_request_v3, encode_resp_body_v3,
     encode_resp_head_cont_v3, encode_resp_head_v3,
+    encode_resp_body_v3_agg,
 };
 pub use crate::payload::{ParsedPacketV3, PayloadV3};
 pub use crate::error::AkariError;

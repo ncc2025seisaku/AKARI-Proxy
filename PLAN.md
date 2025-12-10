@@ -23,7 +23,7 @@
 - [ ] タイムアウト/再リクエストポリシー（10秒、改善なし2連続で破棄、再リクエスト1回）
 
 ## 5. 設定・CLI
-- [ ] conf/web_proxy.toml 等に v3/agg-tag/payload_max/DFオプションを追加
+- [x] conf/web_proxy.toml 等に v3/agg-tag/payload_max/DFオプションを追加
 - [ ] scripts/compare_data_volume.py に v3 計測オプションを追加
 
 ## 6. テスト
