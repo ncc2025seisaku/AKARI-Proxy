@@ -24,7 +24,7 @@ pub enum PacketTypeV3 {
 impl TryFrom<u8> for PacketTypeV3 {
     type Error = AkariError;
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> Result<Self, AkariError> {
         match value {
             0 => Ok(PacketTypeV3::Req),
             1 => Ok(PacketTypeV3::RespHead),

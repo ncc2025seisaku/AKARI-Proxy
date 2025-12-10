@@ -10,11 +10,14 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence, Tuple
 
 from akari_udp_py import (
-    decode_packet_py,
+    decode_packet_auto_py,
     encode_ack_v2_py,
     encode_nack_v2_py,
+    encode_nack_body_v3_py,
+    encode_nack_head_v3_py,
     encode_request_py,
     encode_request_v2_py,
+    encode_request_v3_py,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -31,22 +34,23 @@ def _to_native(value: Any) -> Any:
 @dataclass
 class ResponseAccumulator:
     message_id: int
-    chunks: dict[int, bytes] = field(default_factory=dict)
-    seq_total: int | None = None
+    chunks: dict[int, bytes] = field(default_factory=dict)  # body chunks
+    seq_total: int | None = None  # body seq_total
     status_code: int | None = None
     body_len: int | None = None
     headers_bytes: bytes | None = None
     headers: dict[str, str] | None = None
+    # v3 header chunks
+    hdr_chunks: dict[int, bytes] = field(default_factory=dict)
+    hdr_total: int | None = None
 
-    def add_chunk(self, packet: Mapping[str, Any]) -> None:
+    def add_chunk_v2(self, packet: Mapping[str, Any]) -> None:
         header = packet["header"]
         if header["message_id"] != self.message_id:
             return
-
         payload = packet["payload"]
         seq: int = payload["seq"]
         self.chunks[seq] = payload["chunk"]
-
         seq_total = payload.get("seq_total")
         if seq_total is not None:
             self.seq_total = seq_total
@@ -58,6 +62,41 @@ class ResponseAccumulator:
         if hdr_bytes and self.headers_bytes is None:
             self.headers_bytes = bytes(hdr_bytes)
             self.headers = decode_header_block(self.headers_bytes)
+
+    def add_head_v3(self, payload: Mapping[str, Any]) -> None:
+        self.status_code = payload["status_code"]
+        self.body_len = payload["body_len"]
+        self.seq_total = payload["seq_total_body"]
+        hdr_idx = payload["hdr_idx"]
+        hdr_chunks = payload["hdr_chunks"]
+        self.hdr_total = hdr_chunks
+        self.hdr_chunks[hdr_idx] = bytes(payload["headers"])
+
+    def add_head_cont_v3(self, payload: Mapping[str, Any]) -> None:
+        hdr_idx = payload["hdr_idx"]
+        hdr_chunks = payload["hdr_chunks"]
+        self.hdr_total = hdr_chunks
+        self.hdr_chunks[hdr_idx] = bytes(payload["headers"])
+
+    def add_body_v3(self, header: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
+        seq = payload["seq"]
+        self.chunks[seq] = payload["chunk"]
+        seq_total = payload.get("seq_total") or header.get("seq_total")
+        if seq_total is not None:
+            self.seq_total = seq_total
+
+    @property
+    def header_complete(self) -> bool:
+        if self.hdr_total is None:
+            return False
+        return len(self.hdr_chunks) >= self.hdr_total
+
+    def assemble_headers(self) -> None:
+        if self.headers_bytes is not None or not self.header_complete:
+            return
+        ordered = [self.hdr_chunks[idx] for idx in sorted(self.hdr_chunks)]
+        self.headers_bytes = b"".join(ordered)
+        self.headers = decode_header_block(self.headers_bytes)
 
     @property
     def complete(self) -> bool:
@@ -213,8 +252,12 @@ class AkariUdpClient:
         """Internal send; caller must hold _lock."""
 
         if datagram is None:
-            flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
-            if self._version >= 2:
+            flags = 0x80 if self._use_encryption else 0
+            if self._version >= 3:
+                # v3はagg-tagデフォルト（0x40）、short-idはまだ未使用
+                flags |= 0x40  # agg-tag
+                datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
+            elif self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
@@ -266,6 +309,26 @@ class AkariUdpClient:
                     LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
                     continue
 
+                # v3: ヘッダ欠損があればヘッダ優先でNACK
+                if self._version >= 3 and accumulator.hdr_total:
+                    missing_hdrs = [i for i in range(accumulator.hdr_total) if i not in accumulator.hdr_chunks]
+                    allow_nack_head = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                    if allow_nack_head and missing_hdrs:
+                        bitmap = self._build_missing_bitmap_from_list(missing_hdrs)
+                        nack = encode_nack_head_v3_py(bitmap, message_id, 0, self._psk)
+                        sock.sendto(nack, self._remote_addr)
+                        bytes_sent += len(nack)
+                        nacks_sent += 1
+                        last_activity = time.monotonic()
+                        LOGGER.debug(
+                            "send NACK-HEAD message_id=%s missing=%s bitmap_len=%d nacks_sent=%d",
+                            message_id,
+                            missing_hdrs,
+                            len(bitmap),
+                            nacks_sent,
+                        )
+                        continue
+
                 # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
                 allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                 if (
@@ -309,33 +372,31 @@ class AkariUdpClient:
                 continue
 
             bytes_received += len(data)
-            parsed = decode_packet_py(data, self._psk)
+            parsed = decode_packet_auto_py(data, self._psk)
             native = _to_native(parsed)
             packets.append(native)
             last_activity = time.monotonic()
-            payload = parsed.get("payload", {})
+            payload = native.get("payload", {})
             chunk = payload.get("chunk")
             chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
             LOGGER.info(
                 "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
-                parsed.get("type"),
-                parsed.get("header", {}).get("message_id"),
+                native.get("type"),
+                native.get("header", {}).get("message_id"),
                 payload.get("seq"),
-                payload.get("seq_total"),
+                payload.get("seq_total") or native.get("header", {}).get("seq_total"),
                 chunk_len,
             )
 
-            packet_type = parsed["type"]
+            packet_type = native["type"]
             if packet_type == "resp":
-                accumulator.add_chunk(parsed)
+                accumulator.add_chunk_v2(native)
                 seq_total = accumulator.seq_total
                 seq = payload.get("seq")
 
-                # seq_total が取れたら先頭待ちタイマーを解除
                 if seq_total is not None:
                     first_seq_deadline = None
 
-                # 欠損があれば ACK を送って最初の欠損シーケンスを通知
                 if (
                     self._version >= 2
                     and self._max_ack_rounds > acks_sent
@@ -358,7 +419,6 @@ class AkariUdpClient:
                 if accumulator.complete:
                     break
 
-                # 欠損があり、かつ最後のチャンク（seq_total-1）を受信したタイミングでのみNACKを再送
                 allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                 if (
                     self._version >= 2
@@ -382,8 +442,41 @@ class AkariUdpClient:
                             len(missing_bitmap),
                             nacks_sent,
                         )
+            elif packet_type == "resp-head":
+                accumulator.add_head_v3(payload)
+                if accumulator.header_complete:
+                    accumulator.assemble_headers()
+            elif packet_type == "resp-head-cont":
+                accumulator.add_head_cont_v3(payload)
+                if accumulator.header_complete:
+                    accumulator.assemble_headers()
+            elif packet_type == "resp-body":
+                accumulator.add_body_v3(native.get("header", {}), payload)
+                if accumulator.seq_total is not None and accumulator.complete:
+                    break
+                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                seq_total = accumulator.seq_total
+                seq = payload.get("seq")
+                if allow_nack and seq_total is not None and seq is not None and seq_total > 0 and seq == seq_total - 1:
+                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                    if missing_seqs:
+                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
+                        nack = encode_nack_body_v3_py(missing_bitmap, message_id, 0, self._psk)
+                        sock.sendto(nack, self._remote_addr)
+                        bytes_sent += len(nack)
+                        nacks_sent += 1
+                        LOGGER.debug(
+                            "send NACK-BODY message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (after tail chunk)",
+                            message_id,
+                            missing_seqs,
+                            len(missing_bitmap),
+                            nacks_sent,
+                        )
+            elif packet_type == "nack-head":
+                # ignore on client side (not expected)
+                pass
             elif packet_type == "error":
-                error_payload = parsed["payload"]
+                error_payload = native["payload"]
                 break
 
         body = accumulator.assembled_body() if accumulator.complete else None

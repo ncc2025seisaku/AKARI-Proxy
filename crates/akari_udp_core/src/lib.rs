@@ -21,6 +21,7 @@ pub use crate::encode_v3::{
     encode_error_v3, encode_nack_body_v3, encode_nack_head_v3, encode_request_v3, encode_resp_body_v3,
     encode_resp_head_cont_v3, encode_resp_head_v3,
 };
+pub use crate::payload::{ParsedPacketV3, PayloadV3};
 pub use crate::error::AkariError;
 pub use crate::header::{Header, MessageType, FLAG_ENCRYPT, VERSION_V1, VERSION_V2};
 pub use crate::header_v3::{HeaderV3, PacketTypeV3, FLAG_AGG_TAG, FLAG_SHORT_ID, FLAG_SHORT_LEN, VERSION_V3};

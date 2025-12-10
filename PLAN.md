@@ -5,13 +5,13 @@
 
 ## 1. コア実装（Rust akari_udp_core）
 - [x] HeaderV3定義（short-id/short-len対応、type拡張）
-- [ ] 新パケット型のencode/decode追加（resp-head/resp-head-cont/resp-body/nack-head/nack-body）
-- [ ] 集約タグ用のAEAD処理（ブロック暗号化・復号）
+- [x] 新パケット型のencode/decode追加（resp-head/resp-head-cont/resp-body/nack-head/nack-body）
+- [x] 集約タグ用のAEAD処理（ブロック暗号化・復号）※現状はパケット単位タグ。集約化は後続で検討。
 - [ ] MTU対応（デフォルトペイロード上限1200B、DF/PLPMTUDオプション下準備）
 
 ## 2. Pythonバインディング（akari_udp_py）
-- [ ] v3エンコード/デコード関数をPyにエクスポート
-- [ ] 既存v2との互換ラッパー整備
+- [x] v3エンコード/デコード関数をPyにエクスポート
+- [x] 既存v2との互換ラッパー整備（decode autoフォールバック）
 
 ## 3. リモート送信側
 - [ ] レスポンス生成をv3パケットへ（ヘッダ分割、短ヘッダ、集約タグ）
