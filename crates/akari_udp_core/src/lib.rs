@@ -3,18 +3,27 @@ mod debug;
 mod encode;
 mod error;
 mod header;
+mod header_v3;
+mod encode_v3;
+mod decode_v3;
 mod hmac;
 mod aead;
 mod payload;
 
 pub use crate::decode::decode_packet;
+pub use crate::decode_v3::decode_packet_v3;
 pub use crate::debug::debug_dump;
 pub use crate::encode::{
     encode_ack_v2, encode_error, encode_error_v2, encode_nack_v2, encode_request, encode_request_v2,
     encode_response_chunk, encode_response_chunk_v2, encode_response_first_chunk, encode_response_first_chunk_v2,
 };
+pub use crate::encode_v3::{
+    encode_error_v3, encode_nack_body_v3, encode_nack_head_v3, encode_request_v3, encode_resp_body_v3,
+    encode_resp_head_cont_v3, encode_resp_head_v3,
+};
 pub use crate::error::AkariError;
 pub use crate::header::{Header, MessageType, FLAG_ENCRYPT, VERSION_V1, VERSION_V2};
+pub use crate::header_v3::{HeaderV3, PacketTypeV3, FLAG_AGG_TAG, FLAG_SHORT_ID, FLAG_SHORT_LEN, VERSION_V3};
 pub use crate::payload::{
     AckPayload, ErrorPayload, NackPayload, ParsedPacket, Payload, RequestMethod, RequestPayload, ResponseChunk,
 };
