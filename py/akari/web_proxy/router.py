@@ -206,6 +206,7 @@ class WebRouter:
             timeout=remote.timeout,
             protocol_version=remote.protocol_version,
             use_encryption=use_encryption,
+            df=remote.df,
         )
 
     # ------------------------------- response shaping -------------------------------

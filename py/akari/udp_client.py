@@ -205,6 +205,7 @@ class AkariUdpClient:
         initial_request_retries: int = 1,
         sock_timeout: float = 1.0,
         first_seq_timeout: float = 0.5,
+        df: bool = True,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -221,6 +222,7 @@ class AkariUdpClient:
         self._first_seq_timeout = max(0.0, float(first_seq_timeout)) if first_seq_timeout is not None else None
         # 同一ソケットを複数スレッドで共有するとパケットを奪い合うため直列化用ロックを用意
         self._lock = threading.Lock()
+        self._df = bool(df)
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
@@ -231,6 +233,25 @@ class AkariUdpClient:
             LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
         except OSError:
             LOGGER.warning("could not set UDP SO_RCVBUF to %s", rcvbuf_bytes)
+        self._apply_df(self._sock)
+
+    def _apply_df(self, sock: socket.socket) -> None:
+        """DF（Don't Fragment）フラグを可能な範囲で適用する。失敗しても致命ではない。"""
+        if not self._df:
+            return
+        # Linux では IP_MTU_DISCOVER を DO に、Windows では IP_DONTFRAGMENT を使う
+        try:
+            if hasattr(socket, "IP_MTU_DISCOVER") and hasattr(socket, "IP_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MTU_DISCOVER, socket.IP_PMTUDISC_DO)
+            if hasattr(socket, "IPV6_MTU_DISCOVER") and hasattr(socket, "IPV6_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU_DISCOVER, socket.IPV6_PMTUDISC_DO)
+        except OSError:
+            LOGGER.debug("could not enable DF/PMTUD on socket (IPv4/IPv6)")
+        try:
+            if hasattr(socket, "IP_DONTFRAGMENT"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
+        except OSError:
+            LOGGER.debug("could not set IP_DONTFRAGMENT on socket")
 
     def send_request(
         self,

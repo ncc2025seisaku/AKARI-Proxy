@@ -169,6 +169,8 @@ async def serve_remote_proxy_async(
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     sock.setblocking(True)  # 同期受信で ConnectionResetError を握り潰す
+    if df:
+        _set_df(sock, logger)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffer_size)
         actual_rcvbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
@@ -242,6 +244,20 @@ def parse_psk(value: str, *, hex_mode: bool) -> bytes:
     if hex_mode:
         return bytes.fromhex(value)
     return value.encode("utf-8")
+
+def _set_df(sock: socket.socket, logger: logging.Logger) -> None:
+    try:
+        if hasattr(socket, "IP_MTU_DISCOVER") and hasattr(socket, "IP_PMTUDISC_DO"):
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MTU_DISCOVER, socket.IP_PMTUDISC_DO)
+        if hasattr(socket, "IPV6_MTU_DISCOVER") and hasattr(socket, "IPV6_PMTUDISC_DO"):
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU_DISCOVER, socket.IPV6_PMTUDISC_DO)
+    except OSError:
+        logger.debug("could not enable PMTUD (IPv4/IPv6) on async server socket")
+    try:
+        if hasattr(socket, "IP_DONTFRAGMENT"):
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
+    except OSError:
+        logger.debug("could not set IP_DONTFRAGMENT on async server socket")
 
 
 def main(argv: Sequence[str] | None = None) -> None:

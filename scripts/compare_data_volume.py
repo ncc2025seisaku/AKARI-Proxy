@@ -311,8 +311,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--udp-timeout", type=float, default=None, help="AKARI-UDP 側のタイムアウト秒数（config の値を上書き）")
     parser.add_argument("--udp-retries", type=int, default=1, help="AKARI-UDP リクエスト初回再送回数")
     parser.add_argument("--udp-version", type=int, default=None, help="AKARI-UDP プロトコルバージョン (1/2/3)。未指定なら config を使用")
-    parser.add_argument("--agg-tag", action="store_true", help="v3の集約タグフラグを立てる（将来実装用、現状はフラグのみ）")
-    parser.add_argument("--df-off", action="store_true", help="DF (Don't Fragment) を無効化したい場合に指定（将来実装用、現状はフラグのみ）")
+    parser.add_argument("--agg-tag", action="store_true", help="v3の集約タグフラグを立てる")
+    parser.add_argument("--df-off", action="store_true", help="DF (Don't Fragment) を無効化したい場合に指定")
     parser.add_argument("--log-level", default=os.environ.get("AKARI_COMPARE_LOG_LEVEL", "INFO"), help="ログレベル (DEBUG/INFO/...)")
     return parser.parse_args()
 

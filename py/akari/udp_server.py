@@ -48,6 +48,7 @@ class AkariUdpServer:
         timeout: float | None = None,
         buffer_size: int = 65535,
         payload_max: int | None = None,
+        df: bool = True,
     ) -> None:
         self._psk = psk
         self._handler = handler
@@ -61,9 +62,26 @@ class AkariUdpServer:
                 self._sock.ioctl(SIO_UDP_CONNRESET, b"\x00\x00\x00\x00")
             except (OSError, ValueError):
                 LOGGER.warning("could not disable UDP connreset (Windows); continuing")
+        if df:
+            self._set_df(self._sock)
         if timeout is not None:
             self._sock.settimeout(timeout)
         self.address = self._sock.getsockname()
+
+    @staticmethod
+    def _set_df(sock: socket.socket) -> None:
+        try:
+            if hasattr(socket, "IP_MTU_DISCOVER") and hasattr(socket, "IP_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MTU_DISCOVER, socket.IP_PMTUDISC_DO)
+            if hasattr(socket, "IPV6_MTU_DISCOVER") and hasattr(socket, "IPV6_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU_DISCOVER, socket.IPV6_PMTUDISC_DO)
+        except OSError:
+            LOGGER.debug("could not enable PMTUD (IPv4/IPv6) on server socket")
+        try:
+            if hasattr(socket, "IP_DONTFRAGMENT"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
+        except OSError:
+            LOGGER.debug("could not set IP_DONTFRAGMENT on server socket")
 
     def handle_next(self) -> IncomingRequest | None:
         """1 回だけデータを受信してハンドラに渡す。"""
