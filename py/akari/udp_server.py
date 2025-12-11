@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from akari_udp_py import (
     decode_packet_auto_py,
+    decode_packet_py,
     encode_error_py,
     encode_error_v2_py,
     encode_response_first_chunk_py,
@@ -49,11 +50,13 @@ class AkariUdpServer:
         buffer_size: int = 65535,
         payload_max: int | None = None,
         df: bool = True,
+        plpmtud: bool = False,
     ) -> None:
         self._psk = psk
         self._handler = handler
         self.buffer_size = buffer_size
         self.payload_max = payload_max
+        self._plpmtud = bool(plpmtud)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
         if os.name == "nt":
@@ -83,6 +86,27 @@ class AkariUdpServer:
         except OSError:
             LOGGER.debug("could not set IP_DONTFRAGMENT on server socket")
 
+    def _dynamic_payload_cap(self) -> int | None:
+        """
+        簡易PLPMTUD: ソケットが報告する MTU からUDP/IP/AKARIのオーバーヘッドを差し引き、
+        payload_max の上限を推定する。取得できなければ既定値を返す。
+        """
+        mtu: int | None = None
+        try:
+            if hasattr(socket, "IP_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IP, socket.IP_MTU)
+            elif hasattr(socket, "IPV6_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU)
+        except OSError:
+            mtu = None
+
+        base = self.payload_max
+        if mtu and mtu > 0:
+            # UDP/IP(48) + AKARI固定(40相当) + 安全マージン(32) を引く
+            estimated = max(256, mtu - 120)
+            base = estimated if base is None else min(base, estimated)
+        return base
+
     def handle_next(self) -> IncomingRequest | None:
         """1 回だけデータを受信してハンドラに渡す。"""
 
@@ -94,6 +118,8 @@ class AkariUdpServer:
         except socket.timeout:
             return None
 
+        dyn_payload_max = self._dynamic_payload_cap() if self._plpmtud else self.payload_max
+
         parsed = decode_packet_auto_py(data, self._psk)
         request = IncomingRequest(
             header=parsed["header"],
@@ -104,7 +130,7 @@ class AkariUdpServer:
             datagram=data,
             psk=self._psk,
             buffer_size=self.buffer_size,
-            payload_max=self.payload_max,
+            payload_max=dyn_payload_max,
         )
 
         for datagram in self._handler(request):

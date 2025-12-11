@@ -28,6 +28,7 @@ def serve_remote_proxy(
     payload_max: int | None = None,
     require_encryption: bool = False,
     df: bool = True,
+    plpmtud: bool = False,
     logger: logging.Logger | None = None,
 ) -> None:
     """AkariUdpServer を立ち上げて handle_request を呼び出す."""
@@ -43,6 +44,7 @@ def serve_remote_proxy(
         buffer_size=buffer_size,
         payload_max=payload_max,
         df=df,
+        plpmtud=plpmtud,
     ) as server:
         logger.info("AKARI remote proxy listening on %s:%s", *server.address)
         while True:
@@ -77,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--payload-max", type=int, help="maximum UDP datagram size for payload splitting")
     parser.add_argument("--require-encryption", action="store_true", help="reject requests without E flag")
     parser.add_argument("--no-df", action="store_true", help="allow IP fragmentation (DF off)")
+    parser.add_argument("--no-plpmtud", action="store_true", help="disable MTU probe and keep static payload_max")
     parser.add_argument("--log-level", default="INFO", help="logging level (INFO/DEBUG/...)")
     args = parser.parse_args(argv)
 
@@ -91,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         payload_max=args.payload_max,
         require_encryption=args.require_encryption,
         df=not args.no_df,
+        plpmtud=not args.no_plpmtud,
         logger=logging.getLogger("akari.remote_proxy.server"),
     )
 

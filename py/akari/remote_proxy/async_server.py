@@ -193,13 +193,15 @@ async def serve_remote_proxy_async(
 
     set_fetch_async_func(pooled_fetch_async)
 
+    dyn_payload_max = _dynamic_payload_cap(sock, payload_max) if plpmtud else payload_max
+
     async def handle_and_send(data: bytes, addr) -> None:
         datagrams = await _process_datagram(
             data,
             addr,
             psk=psk,
             handler=handle_request_async,
-            payload_max=payload_max,
+            payload_max=dyn_payload_max,
             buffer_size=buffer_size,
         )
         if not datagrams:
@@ -244,6 +246,22 @@ def parse_psk(value: str, *, hex_mode: bool) -> bytes:
     if hex_mode:
         return bytes.fromhex(value)
     return value.encode("utf-8")
+
+def _dynamic_payload_cap(sock: socket.socket, configured: int | None) -> int | None:
+    mtu: int | None = None
+    try:
+        if hasattr(socket, "IP_MTU"):
+            mtu = sock.getsockopt(socket.IPPROTO_IP, socket.IP_MTU)
+        elif hasattr(socket, "IPV6_MTU"):
+            mtu = sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU)
+    except OSError:
+        mtu = None
+
+    base = configured
+    if mtu and mtu > 0:
+        estimated = max(256, mtu - 120)
+        base = estimated if base is None else min(base, estimated)
+    return base
 
 def _set_df(sock: socket.socket, logger: logging.Logger) -> None:
     try:
