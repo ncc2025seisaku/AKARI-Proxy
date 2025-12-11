@@ -478,7 +478,7 @@ def _encode_success_datagrams_v3(
             )
         )
     body_chunks = [first_chunk] + tail_chunks
-    if not encrypt and (flags & 0x40):
+    if flags & 0x40:
         # aggregateタグを計算（ボディ平文でHMAC-SHA256の先頭16B）
         agg_tag = hmac.new(request.psk, b"".join(body_chunks), hashlib.sha256).digest()[:16]
         for idx, chunk in enumerate(body_chunks):

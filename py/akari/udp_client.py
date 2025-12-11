@@ -405,7 +405,7 @@ class AkariUdpClient:
             last_activity = time.monotonic()
             payload = native.get("payload", {})
             header_flags = native.get("header", {}).get("flags", 0)
-            if header_flags & 0x40 and not (header_flags & 0x80):
+            if header_flags & 0x40:
                 agg_mode = True
             chunk = payload.get("chunk")
             chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None

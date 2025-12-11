@@ -27,8 +27,8 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
         });
     }
     let payload_len = header.payload_len as usize;
-    let agg_mode = (header.flags & crate::header_v3::FLAG_AGG_TAG != 0) && (header.flags & crate::header_v3::FLAG_ENCRYPT == 0);
-    let expected_len = header_len + payload_len + if agg_mode { 0 } else { TAG_LEN };
+    let agg_mode = header.flags & crate::header_v3::FLAG_AGG_TAG != 0;
+    let expected_len = header_len + payload_len + if header.flags & crate::header_v3::FLAG_ENCRYPT != 0 { TAG_LEN } else if agg_mode { 0 } else { TAG_LEN };
     if datagram.len() != expected_len {
         return Err(AkariError::InvalidPacketLength {
             expected: expected_len,
@@ -142,7 +142,7 @@ fn decode_resp_head_cont(payload: &[u8]) -> Result<PayloadV3, AkariError> {
 }
 
 fn decode_resp_body(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    let agg_mode = header.flags & crate::header_v3::FLAG_AGG_TAG != 0 && header.flags & crate::header_v3::FLAG_ENCRYPT == 0;
+    let agg_mode = header.flags & crate::header_v3::FLAG_AGG_TAG != 0;
     if agg_mode && header.seq_total > 0 && header.seq == header.seq_total - 1 {
         if payload.len() < TAG_LEN {
             return Err(AkariError::MissingPayload);
