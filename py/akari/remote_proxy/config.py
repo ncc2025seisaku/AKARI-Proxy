@@ -24,6 +24,10 @@ class RemoteProxyConfig:
     payload_max: int
     df: bool
     plpmtud: bool
+    initial_request_retries: int
+    max_nack_rounds: int
+    first_seq_timeout: float
+    sock_timeout: float
 
 
 class ConfigError(ValueError):
@@ -46,6 +50,10 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
     payload_max = int(server_data.get("payload_max", 1200))
     df = _require_bool(server_data, "df", default=True)
     plpmtud = _require_bool(server_data, "plpmtud", default=False)
+    initial_request_retries = int(server_data.get("initial_request_retries", 1))
+    max_nack_rounds = int(server_data.get("max_nack_rounds", 2))
+    first_seq_timeout = float(server_data.get("first_seq_timeout", 0.5))
+    sock_timeout = float(server_data.get("sock_timeout", 1.0))
 
     return RemoteProxyConfig(
         host=host,
@@ -60,6 +68,10 @@ def load_config(path: str | Path) -> RemoteProxyConfig:
         payload_max=payload_max,
         df=df,
         plpmtud=plpmtud,
+        initial_request_retries=initial_request_retries,
+        max_nack_rounds=max_nack_rounds,
+        first_seq_timeout=first_seq_timeout,
+        sock_timeout=sock_timeout,
     )
 
 

@@ -27,6 +27,10 @@ class RemoteProxyConfig:
     payload_max: int
     df: bool
     plpmtud: bool
+    initial_request_retries: int
+    max_nack_rounds: int
+    first_seq_timeout: float
+    sock_timeout: float
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,10 @@ def load_config(path: str | Path) -> WebProxyConfig:
         payload_max=int(remote_data.get("payload_max", 1200)),
         df=_require_bool(remote_data, "df", default=True),
         plpmtud=_require_bool(remote_data, "plpmtud", default=False),
+        initial_request_retries=int(remote_data.get("initial_request_retries", 1)),
+        max_nack_rounds=int(remote_data.get("max_nack_rounds", 2)),
+        first_seq_timeout=float(remote_data.get("first_seq_timeout", 0.5)),
+        sock_timeout=float(remote_data.get("sock_timeout", 1.0)),
     )
 
     filter_data = data.get("content_filter", {})

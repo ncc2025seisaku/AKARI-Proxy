@@ -207,6 +207,10 @@ class WebRouter:
             protocol_version=remote.protocol_version,
             use_encryption=use_encryption,
             df=remote.df,
+            max_nack_rounds=remote.max_nack_rounds,
+            initial_request_retries=remote.initial_request_retries,
+            first_seq_timeout=remote.first_seq_timeout,
+            sock_timeout=remote.sock_timeout,
         )
 
     # ------------------------------- response shaping -------------------------------
