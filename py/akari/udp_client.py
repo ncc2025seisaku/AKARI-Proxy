@@ -210,7 +210,8 @@ class AkariUdpClient:
         self._remote_addr = remote_addr
         self._psk = psk
         # timeout=None のときは無限待ち
-        self._timeout = timeout
+        # 無指定なら10秒、0以下なら無制限
+        self._timeout = None if (timeout is not None and timeout <= 0) else (10.0 if timeout is None else timeout)
         self._buffer_size = buffer_size
         self._max_nack_rounds = None if max_nack_rounds is None else max(0, int(max_nack_rounds))
         self._max_ack_rounds = max(0, int(max_ack_rounds))
@@ -309,35 +310,22 @@ class AkariUdpClient:
                 LOGGER.debug("recvfrom ConnectionResetError (ignored)")
                 continue
             except socket.timeout:
-                # 先頭チャンク（seq_total 情報）がないまま一定時間経過したら破棄して再リクエスト
                 now = time.monotonic()
-                waiting_first = accumulator.seq_total is None and accumulator.chunks
-                allow_first_retry = self._first_seq_timeout is not None and req_retries_left > 0
-                if waiting_first and allow_first_retry:
-                    if first_seq_deadline is None:
-                        first_seq_deadline = now + self._first_seq_timeout
-                    if now >= first_seq_deadline:
-                        accumulator = ResponseAccumulator(message_id)
-                        first_seq_deadline = None
-                        nacks_sent = 0
+                elapsed = now - last_activity
+
+                # 初回無応答: リトライを優先
+                if not packets:
+                    if req_retries_left > 0:
                         sock.sendto(datagram, self._remote_addr)
                         bytes_sent += len(datagram)
                         req_retries_left -= 1
                         last_activity = now
-                        LOGGER.debug("retry request (missing seq0) message_id=%s (%d left)", message_id, req_retries_left)
+                        LOGGER.debug("retry request (no response yet) message_id=%s (%d left)", message_id, req_retries_left)
                         continue
+                    # リトライ尽きたらタイムアウト判定へ
 
-                # 何も受信できていない場合はリクエスト自体を限定回数で再送
-                if not packets and req_retries_left > 0:
-                    sock.sendto(datagram, self._remote_addr)
-                    bytes_sent += len(datagram)
-                    req_retries_left -= 1
-                    last_activity = time.monotonic()
-                    LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
-                    continue
-
-                # v3: ヘッダ欠損があればヘッダ優先でNACK
-                if self._version >= 3 and accumulator.hdr_total:
+                # ヘッダ未完ならヘッダNACKを優先
+                if self._version >= 3 and accumulator.hdr_total and not accumulator.header_complete:
                     missing_hdrs = [i for i in range(accumulator.hdr_total) if i not in accumulator.hdr_chunks]
                     allow_nack_head = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                     if allow_nack_head and missing_hdrs:
@@ -346,9 +334,9 @@ class AkariUdpClient:
                         sock.sendto(nack, self._remote_addr)
                         bytes_sent += len(nack)
                         nacks_sent += 1
-                        last_activity = time.monotonic()
+                        last_activity = now
                         LOGGER.debug(
-                            "send NACK-HEAD message_id=%s missing=%s bitmap_len=%d nacks_sent=%d",
+                            "send NACK-HEAD message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (timeout)",
                             message_id,
                             missing_hdrs,
                             len(bitmap),
@@ -356,32 +344,33 @@ class AkariUdpClient:
                         )
                         continue
 
-                # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
-                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
-                if (
-                    self._version >= 2
-                    and allow_nack
-                    and accumulator.seq_total is not None
-                    and not accumulator.complete
-                ):
-                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
-                    if missing_seqs:
-                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
-                        nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
-                        sock.sendto(nack, self._remote_addr)
-                        bytes_sent += len(nack)
-                        nacks_sent += 1
-                        last_activity = time.monotonic()
-                        LOGGER.debug(
-                            "send NACK message_id=%s missing=%s bitmap_len=%d nacks_sent=%d",
-                            message_id,
-                            missing_seqs,
-                            len(missing_bitmap),
-                            nacks_sent,
-                        )
-                        continue
+                # ヘッダ完了後はボディNACK
+                if accumulator.seq_total is not None and not accumulator.complete:
+                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                    if allow_nack:
+                        missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                        if missing_seqs:
+                            missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
+                            nack = (
+                                encode_nack_body_v3_py(missing_bitmap, message_id, 0, self._psk)
+                                if self._version >= 3
+                                else encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            )
+                            sock.sendto(nack, self._remote_addr)
+                            bytes_sent += len(nack)
+                            nacks_sent += 1
+                            last_activity = now
+                            LOGGER.debug(
+                                "send NACK-BODY message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (timeout)",
+                                message_id,
+                                missing_seqs,
+                                len(missing_bitmap),
+                                nacks_sent,
+                            )
+                            continue
 
-                if self._timeout is not None and (time.monotonic() - last_activity) >= self._timeout:
+                # 最終的なタイムアウト判定
+                if self._timeout is not None and elapsed >= self._timeout:
                     return ResponseOutcome(
                         message_id=message_id,
                         packets=packets,
