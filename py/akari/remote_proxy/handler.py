@@ -47,6 +47,7 @@ SAFETY_MARGIN = 32  # 余白を拡大して計算ズレや NIC オフロード�
 RESPONSE_FIRST_OVERHEAD = 8  # status(2) + hdr_len/0x0000(2) + body_len(4)
 FLAG_HAS_HEADER = 0x40
 FLAG_ENCRYPT = 0x80
+FLAG_SHORT_LEN = 0x10  # v3: body_len を24bitに短縮
 REQUIRE_ENCRYPTION = False
 
 # v3 固定ヘッダ/タグ（短縮ヘッダ想定）
@@ -95,21 +96,49 @@ def _max_datagram_size(buffer_size: int | None, payload_max: int | None = None) 
     return cap
 
 
-def _calc_payload_caps(buffer_size: int | None, header_block_len: int, payload_max: int | None) -> tuple[int, int]:
-    """先頭チャンク/後続チャンクの最大ペイロード長を計算する."""
-
-    base_cap = _payload_cap(buffer_size, payload_max)
-    cap_tail = base_cap
-    # 先頭チャンクは status/hdr_len/body_len の 8B 固定オーバーヘッドを差し引いた上でヘッダブロック長を考慮
-    # payload_first = 8 + header_block_len + chunk_first <= base_cap
-    cap_first = max(base_cap - RESPONSE_FIRST_OVERHEAD - header_block_len, 1)
-    return cap_first, cap_tail
+def _v3_header_len(flags: int) -> int:
+    """v3ヘッダ長を概算（magic/ver/type/flags/res(6) + message_id(8) + seq(2) + seq_total(2) + payload_len(2))."""
+    use_short_id = bool(flags & 0x20)
+    return (6 + (2 if use_short_id else 8) + 2 + 2 + 2)
 
 
-def _payload_cap(buffer_size: int | None, payload_max: int | None) -> int:
+def _payload_cap(
+    buffer_size: int | None,
+    payload_max: int | None,
+    *,
+    version: int,
+    flags: int = 0,
+    include_tag: bool = True,
+) -> int:
     """ペイロードに割ける最大バイト数（seq>=1 のチャンク上限）"""
     max_dgram = _max_datagram_size(buffer_size, payload_max)
-    return max(max_dgram - UDP_IP_OVERHEAD - PROTO_OVERHEAD - SAFETY_MARGIN, 1)
+    if version >= 3:
+        header_len = _v3_header_len(flags)
+        tag_len = V3_TAG if include_tag else 0
+        overhead = UDP_IP_OVERHEAD + header_len + tag_len + SAFETY_MARGIN
+    else:
+        overhead = UDP_IP_OVERHEAD + PROTO_OVERHEAD + SAFETY_MARGIN
+    return max(max_dgram - overhead, 1)
+
+
+def _calc_payload_caps(
+    buffer_size: int | None,
+    header_block_len: int,
+    payload_max: int | None,
+    *,
+    version: int,
+    flags: int = 0,
+    include_tag: bool = True,
+) -> tuple[int, int]:
+    """先頭チャンク/後続チャンクの最大ペイロード長を計算する."""
+
+    base_cap = _payload_cap(buffer_size, payload_max, version=version, flags=flags, include_tag=include_tag)
+    if version >= 3:
+        # v3 はステータス/ヘッダ長を別パケットに分離済みなので先頭も後続も同じ上限
+        return base_cap, base_cap
+    cap_tail = base_cap
+    cap_first = max(base_cap - RESPONSE_FIRST_OVERHEAD - header_block_len, 1)
+    return cap_first, cap_tail
 
 
 def _clone_response(response: HttpResponse) -> HttpResponse:
@@ -182,8 +211,30 @@ def _maybe_store_http_cache(url: str, response: HttpResponse, *, now: float | No
         _purge_http_cache(now=now)
 
 
-def _split_body(body: bytes, *, buffer_size: int | None, header_block_len: int, payload_max: int | None) -> tuple[bytes, list[bytes]]:
-    cap_first, cap_tail = _calc_payload_caps(buffer_size, header_block_len, payload_max)
+def _split_body(
+    body: bytes,
+    *,
+    buffer_size: int | None,
+    header_block_len: int,
+    payload_max: int | None,
+    version: int,
+    flags: int = 0,
+    agg_tag: bool = False,
+    encrypt: bool = False,
+) -> tuple[bytes, list[bytes]]:
+    cap_first, cap_tail = _calc_payload_caps(
+        buffer_size,
+        header_block_len,
+        payload_max,
+        version=version,
+        flags=flags,
+        include_tag=True,  # 最悪ケース（パケット毎にタグ付与）で計算しておく
+    )
+
+    # 集約タグを載せる場合は最終チャンクに 16B を確保するため全チャンク上限を少し下げる
+    if version >= 3 and agg_tag:
+        cap_first = max(cap_first - V3_TAG, 1)
+        cap_tail = max(cap_tail - V3_TAG, 1)
 
     first_chunk = body[:cap_first]
     remaining = body[cap_first:]
@@ -313,7 +364,11 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
     timestamp = _now_timestamp()
     buffer_size = getattr(request, "buffer_size", None)
     payload_max = getattr(request, "payload_max", None)
-    base_cap = _payload_cap(buffer_size, payload_max)
+    message_id = request.header["message_id"]
+    version = int(request.header.get("version", 1))
+    flags = 0
+
+    base_cap = _payload_cap(buffer_size, payload_max, version=version, flags=flags, include_tag=True)
     header_cap = max(base_cap - RESPONSE_FIRST_OVERHEAD - 64, 1)  # 先頭チャンクに 64B 余白を残す
 
     # 1) ヘッダを白リスト・長さ上限で縮約
@@ -328,23 +383,29 @@ def _encode_success_datagrams(request: IncomingRequest, response: HttpResponse) 
             request.header.get("message_id"),
         )
 
-    first_chunk, tail_chunks = _split_body(body, buffer_size=buffer_size, header_block_len=len(header_block), payload_max=payload_max)
+    # version / flags はこのあとで上書きするため、v2向けデフォルトで初期化
+    first_chunk, tail_chunks = _split_body(
+        body,
+        buffer_size=buffer_size,
+        header_block_len=len(header_block),
+        payload_max=payload_max,
+        version=version,
+        flags=flags,
+        agg_tag=False,
+        encrypt=bool(flags & FLAG_ENCRYPT),
+    )
     seq_total = max(1, 1 + len(tail_chunks))
-    message_id = request.header["message_id"]
-    version = int(request.header.get("version", 1))
     flags = FLAG_HAS_HEADER if header_block else 0
     if request.header.get("flags", 0) & FLAG_ENCRYPT:
         flags |= FLAG_ENCRYPT
 
     if version >= 3:
-        datagrams = _encode_success_datagrams_v3(
+        datagrams, seq_total = _encode_success_datagrams_v3(
             request,
             response,
             header_block=header_block,
             body_len=body_len,
-            first_chunk=first_chunk,
-            tail_chunks=tail_chunks,
-            seq_total=seq_total,
+            body=body,
         )
     elif version >= 2:
         datagrams = [
@@ -431,21 +492,21 @@ def _encode_success_datagrams_v3(
     *,
     header_block: bytes,
     body_len: int,
-    first_chunk: bytes,
-    tail_chunks: list[bytes],
-    seq_total: int,
-) -> list[bytes]:
+    body: bytes,
+) -> tuple[list[bytes], int]:
     """v3レスポンスを組み立てる（現状はパケットごとタグ、集約タグは後続）。"""
     flags = 0x40  # agg-tag要望フラグ（サーバ非対応でも無害）
     encrypt = (request.header.get("flags", 0) & FLAG_ENCRYPT) != 0
     if encrypt:
         flags |= FLAG_ENCRYPT
+    if body_len <= 0x00FF_FFFF:
+        flags |= FLAG_SHORT_LEN
     message_id = request.header["message_id"]
     payload_max = getattr(request, "payload_max", None)
     buffer_size = getattr(request, "buffer_size", None)
 
-    # ヘッダ分割（capは先頭チャンクを想定し、固定8Bくらいを引く簡易計算）
-    base_cap = _payload_cap(buffer_size, payload_max)
+    # ヘッダ分割（capはヘッダパケット用のペイロード上限を使用）
+    base_cap = _payload_cap(buffer_size, payload_max, version=3, flags=flags, include_tag=True)
     cap_header = max(base_cap - 8, 1)
     hdr_chunks_list = [header_block[i : i + cap_header] for i in range(0, len(header_block), cap_header)] or [b""]
     hdr_chunks_count = len(hdr_chunks_list)
@@ -477,7 +538,18 @@ def _encode_success_datagrams_v3(
                 request.psk,
             )
         )
-    body_chunks = [first_chunk] + tail_chunks
+    body_first, body_tail = _split_body(
+        body,
+        buffer_size=buffer_size,
+        header_block_len=0,
+        payload_max=payload_max,
+        version=3,
+        flags=flags,
+        agg_tag=bool(flags & 0x40),
+        encrypt=encrypt,
+    )
+    body_chunks = [body_first] + body_tail
+    seq_total = max(1, len(body_chunks))
     if flags & 0x40:
         # aggregateタグを計算（ボディ平文でHMAC-SHA256の先頭16B）
         agg_tag = hmac.new(request.psk, b"".join(body_chunks), hashlib.sha256).digest()[:16]
@@ -509,7 +581,7 @@ def _encode_success_datagrams_v3(
     with RESP_CACHE_LOCK:
         RESP_CACHE[message_id] = (time.time(), datagrams)
         _purge_resp_cache()
-    return datagrams
+    return datagrams, seq_total
 
 
 def _encode_error(
