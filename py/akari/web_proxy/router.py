@@ -211,6 +211,9 @@ class WebRouter:
             initial_request_retries=remote.initial_request_retries,
             first_seq_timeout=remote.first_seq_timeout,
             sock_timeout=remote.sock_timeout,
+            agg_tag=remote.agg_tag,
+            payload_max=remote.payload_max,
+            plpmtud=remote.plpmtud,
         )
 
     # ------------------------------- response shaping -------------------------------

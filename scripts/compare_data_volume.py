@@ -235,6 +235,8 @@ def fetch_udp_with_count(
         initial_request_retries=initial_request_retries,
         agg_tag=agg_tag,
         df=df if df is not None else getattr(remote, "df", True),
+        payload_max=getattr(remote, "payload_max", None),
+        plpmtud=getattr(remote, "plpmtud", False),
     )
     mid = message_id or (secrets.randbelow(0xFFFF) or 1)
     ts = int(time.time())

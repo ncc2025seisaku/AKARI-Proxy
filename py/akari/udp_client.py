@@ -206,6 +206,10 @@ class AkariUdpClient:
         sock_timeout: float = 1.0,
         first_seq_timeout: float = 0.5,
         df: bool = True,
+        agg_tag: bool = True,
+        payload_max: int | None = None,
+        plpmtud: bool = False,
+        short_id: bool = False,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
@@ -224,6 +228,11 @@ class AkariUdpClient:
         # 同一ソケットを複数スレッドで共有するとパケットを奪い合うため直列化用ロックを用意
         self._lock = threading.Lock()
         self._df = bool(df)
+        self._agg_tag = bool(agg_tag)
+        self._payload_max = payload_max if payload_max and payload_max > 0 else None
+        self._plpmtud = bool(plpmtud)
+        self._short_id = bool(short_id)
+        self._dyn_payload_max: int | None = None
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
@@ -235,6 +244,7 @@ class AkariUdpClient:
         except OSError:
             LOGGER.warning("could not set UDP SO_RCVBUF to %s", rcvbuf_bytes)
         self._apply_df(self._sock)
+        self._dyn_payload_max = self._compute_payload_max()
 
     def _apply_df(self, sock: socket.socket) -> None:
         """DF（Don't Fragment）フラグを可能な範囲で適用する。失敗しても致命ではない。"""
@@ -253,6 +263,29 @@ class AkariUdpClient:
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
         except OSError:
             LOGGER.debug("could not set IP_DONTFRAGMENT on socket")
+
+    def _compute_payload_max(self) -> int | None:
+        """PLPMTUDを考慮した payload_max を算出。取得できない場合は設定値をそのまま返す。"""
+        base = self._payload_max
+        if not self._plpmtud:
+            return base
+        mtu: int | None = None
+        try:
+            if hasattr(socket, "IP_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IP, socket.IP_MTU)
+            elif hasattr(socket, "IPV6_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU)
+        except OSError:
+            mtu = None
+        if mtu and mtu > 0:
+            estimated = max(256, mtu - 120)  # UDP/IP(48) + AKARI(40相当) + マージン(32)
+            return estimated if base is None else min(base, estimated)
+        return base
+
+    def _max_datagram_size(self) -> int:
+        """送信可能と見なす datagram の上限（MTU/設定/バッファの最小値）。"""
+        cap = self._dyn_payload_max if self._dyn_payload_max and self._dyn_payload_max > 0 else 1200
+        return min(self._buffer_size, cap)
 
     def send_request(
         self,
@@ -281,13 +314,22 @@ class AkariUdpClient:
         if datagram is None:
             flags = 0x80 if self._use_encryption else 0
             if self._version >= 3:
-                # v3はagg-tagデフォルト（0x40）、short-idはまだ未使用
-                flags |= 0x40  # agg-tag
+                if self._agg_tag:
+                    flags |= 0x40  # agg-tag
+                if self._short_id:
+                    flags |= 0x20  # short-id
                 datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
             elif self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
+            max_dgram = self._max_datagram_size()
+            if len(datagram) > max_dgram:
+                LOGGER.warning(
+                    "request datagram len=%d exceeds max_dgram=%d (payload_max/PLPMTUD/rcvbuf); fragmentation risk",
+                    len(datagram),
+                    max_dgram,
+                )
 
         packets: list[Mapping[str, Any]] = []
         accumulator = ResponseAccumulator(message_id)
