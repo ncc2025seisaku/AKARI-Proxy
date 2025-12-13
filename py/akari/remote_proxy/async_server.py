@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence, Callable, Awaitable
 
-from akari_udp_py import decode_packet_auto_py
+from akari_udp_py import decode_packet_auto_py, decode_packet_v3_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
@@ -97,13 +97,48 @@ async def _process_datagram(
     buffer_size: int | None = None,
 ) -> Sequence[bytes] | None:
     try:
-        parsed = decode_packet_auto_py(data, psk)
+        # v3 はフォールバック不要なので明示的に先に試し、失敗したらそのままエラーを返す
+        if len(data) >= 3 and data[2] == 3:
+            parsed = decode_packet_v3_py(data, psk)
+        else:
+            parsed = decode_packet_auto_py(data, psk)
     except ValueError as exc:
         message = str(exc) or exc.__class__.__name__
-        if message in {"HMAC mismatch", "invalid PSK"}:
-            LOGGER.warning("discard packet from %s: %s (PSK mismatch?)", addr, message)
+        prefix = data[:32].hex()
+        if message in {"HMAC mismatch", "invalid PSK", "AEAD encrypt/decrypt failed"}:
+            LOGGER.warning(
+                "discard packet from %s: %s (len=%d prefix=%s)",
+                addr,
+                message,
+                len(data),
+                prefix,
+            )
+            if len(data) >= 10 and data[2] == 3:
+                # v3ヘッダをざっくりデコードしてヒントを出す
+                flags = data[4]
+                short_id = bool(flags & 0x20)
+                hdr_len = 14 if short_id else 20
+                if len(data) >= hdr_len:
+                    msg_id = int.from_bytes(data[6 : 6 + (2 if short_id else 8)], "big")
+                    seq = int.from_bytes(data[6 + (2 if short_id else 8) : 8 + (2 if short_id else 8)], "big")
+                    seq_total = int.from_bytes(
+                        data[8 + (2 if short_id else 8) : 10 + (2 if short_id else 8)], "big"
+                    )
+                    payload_len = int.from_bytes(
+                        data[10 + (2 if short_id else 8) : 12 + (2 if short_id else 8)], "big"
+                    )
+                    LOGGER.warning(
+                        "v3 header peek: flags=0x%x short_id=%s msg_id=%d seq=%d seq_total=%d payload_len=%d hdr_len=%d",
+                        flags,
+                        short_id,
+                        msg_id,
+                        seq,
+                        seq_total,
+                        payload_len,
+                        hdr_len,
+                    )
         else:
-            LOGGER.warning("discard packet from %s: %s", addr, message)
+            LOGGER.warning("discard packet from %s: %s (len=%d prefix=%s)", addr, message, len(data), prefix)
         return None
     except Exception:
         LOGGER.exception("unexpected error while processing datagram from %s", addr)
@@ -324,4 +359,3 @@ def run(argv: Iterable[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

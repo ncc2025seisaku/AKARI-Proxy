@@ -238,9 +238,13 @@ class AkariUdpClient:
         self._sock.settimeout(self._sock_timeout)
         try:
             target_rcvbuf = max(int(rcvbuf_bytes), buffer_size)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, target_rcvbuf)
-            actual = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
-            LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
+            try:
+                self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, target_rcvbuf)
+                actual = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+                LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
+            except AttributeError:
+                # テスト用 FakeSocket など setsockopt 未実装の場合は無視
+                LOGGER.debug("setsockopt not available on socket; skipping buffer tuning")
         except OSError:
             LOGGER.warning("could not set UDP SO_RCVBUF to %s", rcvbuf_bytes)
         self._apply_df(self._sock)
@@ -314,8 +318,6 @@ class AkariUdpClient:
         if datagram is None:
             flags = 0x80 if self._use_encryption else 0
             if self._version >= 3:
-                if self._agg_tag:
-                    flags |= 0x40  # agg-tag
                 if self._short_id:
                     flags |= 0x20  # short-id
                 datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
@@ -350,6 +352,7 @@ class AkariUdpClient:
                 data, _ = sock.recvfrom(self._buffer_size)
             except ConnectionResetError:
                 LOGGER.debug("recvfrom ConnectionResetError (ignored)")
+                continue
                 continue
             except socket.timeout:
                 now = time.monotonic()
@@ -430,13 +433,23 @@ class AkariUdpClient:
                 continue
 
             bytes_received += len(data)
-            parsed = decode_packet_auto_py(data, self._psk)
+            try:
+                from akari_udp_py import decode_packet_v3_py
+                parsed = decode_packet_v3_py(data, self._psk)
+            except Exception as e_v3:
+                # v3 decode failed, try auto/fallback but log the v3 error for debugging
+                LOGGER.debug("v3 decode failed: %s (len=%d)", e_v3, len(data))
+                try:
+                    parsed = decode_packet_auto_py(data, self._psk)
+                except Exception as e_auto:
+                    LOGGER.error("packet decode failed completely: %s (v3 error: %s)", e_auto, e_v3)
+                    raise e_auto
             native = _to_native(parsed)
             packets.append(native)
             last_activity = time.monotonic()
             payload = native.get("payload", {})
             header_flags = native.get("header", {}).get("flags", 0)
-            if header_flags & 0x40:
+            if header_flags & 0x40 and self._version >= 3:
                 agg_mode = True
             chunk = payload.get("chunk")
             chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
@@ -592,6 +605,12 @@ class AkariUdpClient:
             bit = seq % 8
             bitmap[idx] |= 1 << bit
         return bytes(bitmap)
+
+    # 互換用: 古いテストが参照するヘルパ
+    def _build_missing_bitmap(self, acc: ResponseAccumulator) -> bytes:  # pragma: no cover - compatibility
+        if acc.seq_total is None:
+            return b""
+        return self._build_missing_bitmap_from_list(self._missing_seq_list(acc))
 
     def _sanitize_missing(self, missing: list[int], acc: ResponseAccumulator) -> list[int]:
         # 念のため、受信済みが混ざっていたら除外しログに残す

@@ -20,17 +20,17 @@ class UIConfig:
 class RemoteProxyConfig:
     host: str
     port: int
-    psk: bytes
-    timeout: float | None
-    protocol_version: int
-    agg_tag: bool
-    payload_max: int
-    df: bool
-    plpmtud: bool
-    initial_request_retries: int
-    max_nack_rounds: int
-    first_seq_timeout: float
-    sock_timeout: float
+    psk: bytes = b""
+    timeout: float | None = None
+    protocol_version: int = 2
+    agg_tag: bool = True
+    payload_max: int = 1200
+    df: bool = True
+    plpmtud: bool = False
+    initial_request_retries: int = 1
+    max_nack_rounds: int = 2
+    first_seq_timeout: float = 0.5
+    sock_timeout: float = 1.0
 
 
 @dataclass(frozen=True)

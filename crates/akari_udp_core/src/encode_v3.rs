@@ -116,7 +116,8 @@ pub fn encode_resp_head_cont_v3(
         seq_total: 0,      // unused
         payload_len: payload.len() as u16,
     };
-    finalize_packet(&header, &payload, psk, flags & FLAG_ENCRYPT != 0)
+    // 非暗号化でも per-packet HMAC を付ける（ヘッダ継続も欠損検知対象）
+    finalize_packet(&header, &payload, psk, true)
 }
 
 pub fn encode_resp_body_v3(

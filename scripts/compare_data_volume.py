@@ -64,8 +64,8 @@ class CountingSocket(socket.socket):
         self.bytes_received += len(data)
         return data
 
-    def recv_into(self, buffer, nbytes: int | None = None, *args, **kwargs) -> int:  # type: ignore[override]
-        read = super().recv_into(buffer, nbytes, *args, **kwargs)
+    def recv_into(self, buffer, nbytes: int = 0, *args) -> int:
+        read = super().recv_into(buffer, nbytes, *args)
         self.bytes_received += max(read, 0)
         return read
 
@@ -84,12 +84,35 @@ class CountingSocket(socket.socket):
         self.bytes_received += len(data)
         return data, addr
 
-    def recvfrom_into(self, buffer, nbytes: int | None = None, *args, **kwargs):  # type: ignore[override]
-        read, addr = super().recvfrom_into(buffer, nbytes, *args, **kwargs)
+    def recvfrom_into(self, buffer, nbytes: int = 0, *args):  # type: ignore[override]
+        read, addr = super().recvfrom_into(buffer, nbytes, *args)
         self.bytes_received += max(read, 0)
         return read, addr
 
 
+class CountingHTTPConnection(http.client.HTTPConnection):
+    """送受信バイト数を採取する HTTPConnection."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._counter: CountingSocket | None = None
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self.host, self.port),
+            self.timeout,
+            self.source_address,
+        )
+        self._counter = CountingSocket(self.sock)
+        self.sock = self._counter
+
+    @property
+    def bytes_sent(self) -> int:
+        return self._counter.bytes_sent if self._counter else 0
+
+    @property
+    def bytes_received(self) -> int:
+        return self._counter.bytes_received if self._counter else 0
 class CountingHTTPSConnection(http.client.HTTPSConnection):
     """TLS ハンドシェイクを含む送受信バイト数を採取する HTTPSConnection."""
 
@@ -128,14 +151,15 @@ def _build_path(path: str, query: str) -> str:
     return normalized_path
 
 
-def fetch_https_with_count(
+def fetch_with_count(
     url: str,
     *,
     timeout: float,
     max_body_bytes: int,
     max_redirects: int,
+    context: ssl.SSLContext | None = None,
 ) -> TrafficSample:
-    """HTTPS で実際に送受信された総バイト数を（ハンドシェイク込みで）計測."""
+    """HTTP/HTTPS で実際に送受信された総バイト数を計測."""
     current = url
     redirects: list[str] = []
     total_sent = 0
@@ -145,12 +169,15 @@ def fetch_https_with_count(
 
     for _ in range(max_redirects + 1):
         parsed = urlsplit(current)
-        if parsed.scheme != "https":
-            raise ValueError("HTTPS URL を指定してください。リダイレクト先が HTTP の場合は --max-redirects を下げてください。")
-
         host = parsed.hostname or ""
-        port = parsed.port or 443
-        conn = CountingHTTPSConnection(host, port, timeout=timeout)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        if parsed.scheme == "https":
+            conn = CountingHTTPSConnection(host, port, timeout=timeout, context=context)
+        elif parsed.scheme == "http":
+            conn = CountingHTTPConnection(host, port, timeout=timeout)
+        else:
+             raise ValueError("http または https URL を指定してください。")
         headers = {
             "Host": f"{host}:{port}" if port not in (443, None) else host,
             "User-Agent": USER_AGENT,
@@ -315,6 +342,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--udp-version", type=int, default=None, help="AKARI-UDP プロトコルバージョン (1/2/3)。未指定なら config を使用")
     parser.add_argument("--agg-tag", action="store_true", help="v3の集約タグフラグを立てる")
     parser.add_argument("--df-off", action="store_true", help="DF (Don't Fragment) を無効化したい場合に指定")
+    parser.add_argument("--ctx-insecure", action="store_true", help="SSL証明書の検証をスキップ")
     parser.add_argument("--log-level", default=os.environ.get("AKARI_COMPARE_LOG_LEVEL", "INFO"), help="ログレベル (DEBUG/INFO/...)")
     return parser.parse_args()
 
@@ -331,15 +359,22 @@ def main() -> None:
         print(f"設定読み込みに失敗しました: {exc}")
         raise SystemExit(1) from exc
 
-    if not args.url.startswith("https://"):
-        print("URL は https:// から始まるものを指定してください。")
+    if not args.url.startswith("https://") and not args.url.startswith("http://"):
+        print("URL は https:// または http:// から始まるものを指定してください。")
         raise SystemExit(1)
 
-    https_sample = fetch_https_with_count(
+    context = None
+    if args.ctx_insecure:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+    https_sample = fetch_with_count(
         args.url,
         timeout=args.timeout,
         max_body_bytes=args.max_body_bytes,
         max_redirects=args.max_redirects,
+        context=context,
     )
     udp_sample = fetch_udp_with_count(
         args.url,
@@ -355,4 +390,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except Exception:
+        with open("traceback.txt", "w") as f:
+            f.write(traceback.format_exc())
+        raise

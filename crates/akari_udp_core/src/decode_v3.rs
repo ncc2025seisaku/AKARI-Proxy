@@ -20,15 +20,25 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
     // header length is dynamic (short-id)
     let header = HeaderV3::from_bytes(datagram)?;
     let header_len = header.encoded_len();
-    if datagram.len() < header_len + TAG_LEN {
+    let encrypt = header.flags & crate::header_v3::FLAG_ENCRYPT != 0;
+    let agg_mode = (header.flags & crate::header_v3::FLAG_AGG_TAG != 0) && (header.packet_type == PacketTypeV3::RespBody);
+    let min_tag = if !encrypt && agg_mode { 0 } else { TAG_LEN };
+    if datagram.len() < header_len + min_tag {
         return Err(AkariError::InvalidPacketLength {
-            expected: header_len + TAG_LEN,
+            expected: header_len + min_tag,
             actual: datagram.len(),
         });
     }
     let payload_len = header.payload_len as usize;
-    let agg_mode = header.flags & crate::header_v3::FLAG_AGG_TAG != 0;
-    let expected_len = header_len + payload_len + if header.flags & crate::header_v3::FLAG_ENCRYPT != 0 { TAG_LEN } else if agg_mode { 0 } else { TAG_LEN };
+    let expected_len = header_len
+        + payload_len
+        + if encrypt {
+            TAG_LEN
+        } else if agg_mode {
+            0
+        } else {
+            TAG_LEN
+        };
     if datagram.len() != expected_len {
         return Err(AkariError::InvalidPacketLength {
             expected: expected_len,
