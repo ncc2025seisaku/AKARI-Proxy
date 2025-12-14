@@ -34,7 +34,13 @@ sys.path.insert(0, str(ROOT / "py"))
 from akari.remote_proxy.handler import ERROR_TIMEOUT  # noqa: E402
 from akari.udp_client import AkariUdpClient, ResponseAccumulator, ResponseOutcome  # noqa: E402
 from akari.udp_server import AkariUdpServer, IncomingRequest, encode_error_response, encode_success_response  # noqa: E402
-from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py, encode_request_v2_py  # noqa: E402
+from akari_udp_py import (  # noqa: E402
+    decode_packet_py,
+    encode_nack_v2_py,
+    encode_request_py,
+    encode_request_v2_py,
+    encode_request_v3_py,
+)
 
 LOGGER = logging.getLogger("akari.loadtest")
 NACK_MIN_INTERVAL = 0.05  # seconds; avoid NACK連打
@@ -97,7 +103,9 @@ class LoadTestClient(AkariUdpClient):
     ) -> ResponseOutcome:
         if datagram is None:
             flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
-            if self._version >= 2:
+            if self._version >= 3:
+                datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
+            elif self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
@@ -557,7 +565,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=14500, help="Remote proxy port")
     parser.add_argument("--psk", default="test-psk-0000-test", help="PSK (text or hex if --hex is set)")
     parser.add_argument("--hex", action="store_true", help="Interpret PSK as hexadecimal")
-    parser.add_argument("--protocol-version", type=int, default=2, choices=[1, 2], help="AKARI protocol version")
+    parser.add_argument("--protocol-version", type=int, default=3, choices=[1, 2, 3], help="AKARI protocol version")
     parser.add_argument("--url", action="append", dest="urls", help="Target URL (can specify multiple)")
     parser.add_argument("--url-file", help="Path to file that lists target URLs line by line")
     parser.add_argument("--requests", type=int, default=200, help="Total request count")

@@ -214,7 +214,7 @@ def append_jsonl(path: Path, obj: dict[str, object]) -> None:
 
 def build_suite_parser() -> argparse.ArgumentParser:
     parser = build_base_parser()
-    parser.description = "AKARI-UDPv2 disaster checklist scenario runner"
+    parser.description = "AKARI-UDP (v1/v2/v3) disaster checklist scenario runner"
     parser.set_defaults(requests=200, concurrency=16, timeout=3.0)
     parser.add_argument("--scenario", action="append", dest="scenarios", help="Scenario key to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1, help="How many times to run the scenario list")
@@ -479,4 +479,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
