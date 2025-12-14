@@ -92,8 +92,16 @@ def fetch(
         },
     )
 
+    import os
+    import ssl
+    context = None
+    if os.environ.get("AKARI_INSECURE_FETCH"):
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        with request.urlopen(req, timeout=timeout, context=context) as resp:
             body = resp.read(max_bytes + 1)
             if len(body) > max_bytes:
                 raise BodyTooLargeError(max_bytes)

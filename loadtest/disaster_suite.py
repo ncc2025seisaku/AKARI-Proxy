@@ -214,7 +214,7 @@ def append_jsonl(path: Path, obj: dict[str, object]) -> None:
 
 def build_suite_parser() -> argparse.ArgumentParser:
     parser = build_base_parser()
-    parser.description = "AKARI-UDPv2 disaster checklist scenario runner"
+    parser.description = "AKARI-UDP (v1/v2/v3) disaster checklist scenario runner"
     parser.set_defaults(requests=200, concurrency=16, timeout=3.0)
     parser.add_argument("--scenario", action="append", dest="scenarios", help="Scenario key to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1, help="How many times to run the scenario list")
@@ -332,6 +332,9 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
     most_nacks = ("", 0)
     most_retries = ("", 0)
 
+    # 条件表示用にキャプチャ
+    runtime_rows: list[tuple[str, dict[str, object]]] = []
+
     for key in scenarios:
         rec = latest[key]
         summary = rec.get("summary", {})
@@ -351,6 +354,8 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
         lines.append(
             f"| {emoji} | {key} | {success}/{req} | {success_rate:.1f}% | {timeout} | {error} | {nacks} | {retries} | {_format_ms(p95)} | {rps:.1f} | {elapsed:.3f}s |"
         )
+
+        runtime_rows.append((key, runtime))
 
         if p95 > worst_p95[1]:
             worst_p95 = (key, p95)
@@ -377,6 +382,27 @@ def build_markdown_report(*, history_path: Path, run_started_at: float, run_fini
     lines.append("- RPS: Requests per second（1秒あたり平均完了数）")
     lines.append("- NACK送信: 欠損補完のために送信した NACK パケット総数")
     lines.append("- 再リクエスト: タイムアウト後にリクエスト全体を再送した回数（初回送信を除く）")
+    lines.append("")
+
+    # 条件一覧（ロス/ジッタなど環境パラメータを可視化）
+    lines.append("## シナリオ実行条件")
+    lines.append("| シナリオ | パケット損失率 | ジッタ(秒) | 待ち時間(秒) | ブラックアウト間隔/長さ(秒) | タイムアウト(秒) | max_nack | 同時実行 | リクエスト数 | URL |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
+    for key, runtime in runtime_rows:
+        loss = runtime.get("loss_rate", 0)
+        jitter = runtime.get("jitter", 0)
+        delay = runtime.get("delay", 0)
+        flap_i = runtime.get("flap_interval", 0)
+        flap_d = runtime.get("flap_duration", 0)
+        timeout = runtime.get("timeout", 0)
+        max_nack = runtime.get("max_nack_rounds", 0)
+        conc = runtime.get("concurrency", 0)
+        reqs = runtime.get("requests", 0)
+        urls = runtime.get("urls") or []
+        url_disp = ",".join(urls) if isinstance(urls, list) else str(urls)
+        lines.append(
+            f"| {key} | {loss} | {jitter} | {delay} | {flap_i}/{flap_d} | {timeout} | {max_nack} | {conc} | {reqs} | {url_disp} |"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -479,4 +505,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
