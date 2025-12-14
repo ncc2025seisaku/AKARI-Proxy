@@ -534,11 +534,23 @@ def _encode_success_datagrams_v3(
     body_chunks = [body_first] + body_tail
     seq_total = max(1, len(body_chunks))
 
+    # プロトコル制約: seq_total は 16bit に収まる必要がある
+    if seq_total > 0xFFFF:
+        raise BodyTooLargeError(
+            f"response body requires {seq_total} chunks (>65535). "
+            f"payload_max={payload_max or 'default'}, buffer_size={buffer_size or 'default'}"
+        )
+
     # ヘッダ分割（capはヘッダパケット用のペイロード上限を使用）
     base_cap = _payload_cap(buffer_size, payload_max, version=3, flags=flags, include_tag=True)
     cap_header = max(base_cap - 8, 1)
     hdr_chunks_list = [header_block[i : i + cap_header] for i in range(0, len(header_block), cap_header)] or [b""]
     hdr_chunks_count = len(hdr_chunks_list)
+    if hdr_chunks_count > 0xFF:
+        raise BodyTooLargeError(
+            f"response headers require {hdr_chunks_count} chunks (>255). "
+            f"payload_max={payload_max or 'default'}, buffer_size={buffer_size or 'default'}"
+        )
 
     datagrams: list[bytes] = []
     # ヘッダ最初のチャンク

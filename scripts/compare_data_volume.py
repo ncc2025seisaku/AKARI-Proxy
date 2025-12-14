@@ -109,7 +109,7 @@ class CountingSocket(socket.socket):
 
 
 class CountingSocketWrapper:
-    """任意のソケット（平文/SSL問わず）をラップして送受信バイトを計測する薄いデリゲータ."""
+    """任意のソケットをラップして送受信バイトを計測する薄いデリゲータ."""
 
     def __init__(self, sock: socket.socket) -> None:
         self._sock = sock
@@ -125,6 +125,7 @@ class CountingSocketWrapper:
         self._orig_recvfrom = getattr(sock, "recvfrom", None)
 
         # 受信側のみ確実にカウントするためパッチ（ファイルオブジェクトが直接 sock.recv を叩くケースを拾う）
+        # 一部のソケット実装では recv 属性が read-only のため、失敗したらスキップしても計測継続できるようにする
         if self._orig_recv:
             orig = self._orig_recv
 
@@ -133,7 +134,10 @@ class CountingSocketWrapper:
                 self.bytes_received += len(data)
                 return data
 
-            sock.recv = _patched_recv  # type: ignore[assignment]
+            try:
+                sock.recv = _patched_recv  # type: ignore[assignment]
+            except Exception:
+                pass
 
         if self._orig_recv_into:
             orig_into = self._orig_recv_into
@@ -143,7 +147,10 @@ class CountingSocketWrapper:
                 self.bytes_received += max(read, 0)
                 return read
 
-            sock.recv_into = _patched_recv_into  # type: ignore[assignment]
+            try:
+                sock.recv_into = _patched_recv_into  # type: ignore[assignment]
+            except Exception:
+                pass
 
     # --- 送信系 ---
     def send(self, data: bytes, *args, **kwargs) -> int:  # type: ignore[override]
@@ -207,7 +214,7 @@ class CountingSocketWrapper:
 class CountingHTTPConnection(http.client.HTTPConnection):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._counter: CountingSocketWrapper | None = None
+        self._counter: CountingSocket | None = None
 
     def connect(self) -> None:
         raw_sock = socket.create_connection(
@@ -215,7 +222,7 @@ class CountingHTTPConnection(http.client.HTTPConnection):
             self.timeout,
             self.source_address,
         )
-        counter = CountingSocketWrapper(raw_sock)
+        counter = CountingSocket(raw_sock)
         self._counter = counter
         self.sock = counter
 
@@ -240,9 +247,9 @@ class CountingHTTPSConnection(http.client.HTTPSConnection):
             self.timeout,
             self.source_address,
         )
-        # トンネルが必要なら先に素のソケットで CONNECT する
+        # CONNECTは生ソケットで実行（ハンドシェイク前バイトはカウントしない方針）
         if self._tunnel_host:
-            self.sock = base_sock
+            self.sock = base_sock  # type: ignore[assignment]
             self._tunnel()
 
         ssl_sock = self._context.wrap_socket(base_sock, server_hostname=self.host)
@@ -476,7 +483,9 @@ def run_comparison(
 
             results.append({
                 "url": url,
-                "payload_bytes": h_stats.payload_bytes if h_stats.payload_bytes > 0 else u_stats.payload_bytes,
+                # それぞれ圧縮後のペイロード長を個別に保持（比較時に混同しないようにする）
+                "https_payload": h_stats.payload_bytes,
+                "udp_payload": u_stats.payload_bytes,
                 
                 "https_status": h_stats.status_code,
                 "https_sent": h_stats.wire_bytes_sent,
@@ -505,7 +514,7 @@ def print_results(results: List[dict], output_format: str):
     if output_format == "csv":
         writer = csv.writer(sys.stdout)
         header = [
-            "url", "payload_bytes", 
+            "url", "https_payload", "udp_payload",
             "https_status", "https_sent", "https_recv", "https_time", "https_overhead_pct",
             "udp_status", "udp_sent", "udp_recv", "udp_time", "udp_overhead_pct",
             "sent_reduction_pct", "recv_reduction_pct"
@@ -513,7 +522,7 @@ def print_results(results: List[dict], output_format: str):
         writer.writerow(header)
         for r in results:
             writer.writerow([
-                r["url"], r["payload_bytes"],
+                r["url"], r["https_payload"], r["udp_payload"],
                 r["https_status"], r["https_sent"], r["https_recv"], f"{r['https_time']:.3f}", f"{r['https_overhead']:.2f}",
                 r["udp_status"], r["udp_sent"], r["udp_recv"], f"{r['udp_time']:.3f}", f"{r['udp_overhead']:.2f}",
                 f"{r['sent_reduction_pct']:.2f}", f"{r['recv_reduction_pct']:.2f}"
@@ -525,14 +534,14 @@ def print_results(results: List[dict], output_format: str):
         console = Console()
         table = Table(title="AKARI-UDP vs HTTPS Traffic Comparison")
         table.add_column("URL", style="cyan", no_wrap=True)
-        table.add_column("Payload", justify="right")
+        table.add_column("Payload(H/U)", justify="right")
         table.add_column("Reduce(Recv)", justify="right", style="green")
         table.add_column("HTTPS (Recv/Overhead)", justify="right")
         table.add_column("UDP (Recv/Overhead)", justify="right")
         table.add_column("Time (H/U)", justify="right")
 
         for r in results:
-            payload_str = f"{r['payload_bytes']:,}"
+            payload_str = f"{r['https_payload']:,}/{r['udp_payload']:,}"
             reduce_str = f"{r['recv_reduction_pct']:.1f}%"
             
             https_info = f"{r['https_recv']:,} / {r['https_overhead']:.1f}%"
@@ -551,7 +560,7 @@ def print_results(results: List[dict], output_format: str):
             if r['error']:
                 print(f"Error: {r['error']}")
                 continue
-            print(f"Payload: {r['payload_bytes']:,} bytes")
+            print(f"Payload (H/U): {r['https_payload']:,} / {r['udp_payload']:,} bytes")
             print(f"HTTPS: Recv {r['https_recv']:,} (Overhead {r['https_overhead']:.1f}%) Time {r['https_time']:.2f}s")
             print(f"UDP  : Recv {r['udp_recv']:,} (Overhead {r['udp_overhead']:.1f}%) Time {r['udp_time']:.2f}s")
             print(f"Reduction: {r['recv_reduction_pct']:.1f}%")
