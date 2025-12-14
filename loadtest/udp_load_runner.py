@@ -93,6 +93,22 @@ class LoadTestClient(AkariUdpClient):
         # 最初のレスポンスは欠損させずに通すためのガード
         self._skip_first_drop = True
 
+    class _LossySocketWrapper:
+        """wrap socket to inject loss/jitter/flap into recvfrom."""
+
+        def __init__(self, sock, dropper):
+            self._sock = sock
+            self._dropper = dropper
+
+        def recvfrom(self, bufsize):
+            return self._dropper(self._sock.recvfrom, bufsize)
+
+        def __getattr__(self, name):
+            return getattr(self._sock, name)
+
+        def fileno(self):
+            return self._sock.fileno()
+
     def send_request(  # type: ignore[override]
         self,
         url: str,
@@ -101,11 +117,30 @@ class LoadTestClient(AkariUdpClient):
         *,
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
+        # v3 についても AkariUdpClient の実装を使うが、ここで loss/jitter/flap を挿入する
+        if self._version >= 3:
+            def dropper(recvfrom_fn, bufsize: int):
+                # フラップ区間ならタイムアウト扱い
+                if self._flap_interval and self._flap_duration:
+                    if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
+                        raise socket.timeout()
+                data, addr = recvfrom_fn(bufsize)
+                if self._loss_rate and random.random() < self._loss_rate:
+                    raise socket.timeout()
+                if self._jitter:
+                    time.sleep(random.uniform(0, self._jitter))
+                return data, addr
+
+            original_sock = self._sock
+            self._sock = self._LossySocketWrapper(self._sock, dropper)
+            try:
+                return super().send_request(url, message_id, timestamp, datagram=datagram)
+            finally:
+                self._sock = original_sock
+
         if datagram is None:
             flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
-            if self._version >= 3:
-                datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
-            elif self._version >= 2:
+            if self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
