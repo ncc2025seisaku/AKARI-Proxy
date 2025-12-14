@@ -1,9 +1,9 @@
 {
-  "started_at": 1765723114.595165,
-  "finished_at": 1765723330.139451,
+  "started_at": 1765725976.2950075,
+  "finished_at": 1765726025.6492248,
   "records": [
     {
-      "timestamp": 1765723120.1050403,
+      "timestamp": 1765725976.799203,
       "iteration": 1,
       "scenario": "baseline_demo",
       "description": "Baseline sanity: local demo server, no loss/jitter.",
@@ -27,7 +27,7 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
@@ -38,19 +38,19 @@
         "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 4720,
-        "bytes_received": 268720,
+        "bytes_sent": 4800,
+        "bytes_received": 60240,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 0.519,
-        "latency_p95_sec": 0.67,
-        "latency_p99_sec": 0.6735,
-        "elapsed_sec": 5.38,
-        "rps": 14.87
+        "latency_avg_sec": 0.0051,
+        "latency_p95_sec": 0.0076,
+        "latency_p99_sec": 0.0078,
+        "elapsed_sec": 0.075,
+        "rps": 1063.8
       }
     },
     {
-      "timestamp": 1765723152.1551068,
+      "timestamp": 1765725980.8085227,
       "iteration": 1,
       "scenario": "delay_loss_extreme",
       "description": "3s delay + 20% loss + 300ms jitter (disaster worst-case).",
@@ -74,30 +74,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 132,
-        "timeout": 5,
-        "error": 63,
+        "success": 200,
+        "timeout": 0,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 23293,
-        "bytes_received": 782080,
-        "nacks_sent": 245,
-        "request_retries": 37,
-        "latency_avg_sec": 0.8691,
-        "latency_p95_sec": 1.44,
-        "latency_p99_sec": 1.6384,
-        "elapsed_sec": 31.568,
-        "rps": 6.34
+        "bytes_sent": 16172,
+        "bytes_received": 142848,
+        "nacks_sent": 34,
+        "request_retries": 48,
+        "latency_avg_sec": 0.2873,
+        "latency_p95_sec": 0.5089,
+        "latency_p99_sec": 0.6177,
+        "elapsed_sec": 3.824,
+        "rps": 52.3
       }
     },
     {
-      "timestamp": 1765723167.6811943,
+      "timestamp": 1765725985.8202252,
       "iteration": 1,
       "scenario": "jitter_spike",
       "description": "Jitter 350ms spike: reorder/timeout/backoff stability check.",
@@ -121,7 +121,7 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
@@ -132,19 +132,19 @@
         "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 11800,
-        "bytes_received": 671800,
+        "bytes_sent": 12000,
+        "bytes_received": 150600,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 1.1645,
-        "latency_p95_sec": 1.5313,
-        "latency_p99_sec": 1.6767,
-        "elapsed_sec": 15.318,
-        "rps": 13.06
+        "latency_avg_sec": 0.3601,
+        "latency_p95_sec": 0.574,
+        "latency_p99_sec": 0.6145,
+        "elapsed_sec": 4.813,
+        "rps": 41.56
       }
     },
     {
-      "timestamp": 1765723192.2236674,
+      "timestamp": 1765726006.3582904,
       "iteration": 1,
       "scenario": "loss_heavy",
       "description": "25% loss: retry backoff and stability check.",
@@ -168,30 +168,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 168,
-        "timeout": 7,
-        "error": 45,
+        "success": 217,
+        "timeout": 3,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 26303,
-        "bytes_received": 806383,
-        "nacks_sent": 259,
-        "request_retries": 59,
-        "latency_avg_sec": 0.3632,
-        "latency_p95_sec": 0.5938,
-        "latency_p99_sec": 0.6051,
-        "elapsed_sec": 24.466,
-        "rps": 8.99
+        "bytes_sent": 18634,
+        "bytes_received": 157077,
+        "nacks_sent": 53,
+        "request_retries": 57,
+        "latency_avg_sec": 0.0209,
+        "latency_p95_sec": 0.0421,
+        "latency_p99_sec": 0.0614,
+        "elapsed_sec": 20.4,
+        "rps": 10.78
       }
     },
     {
-      "timestamp": 1765723217.2676322,
+      "timestamp": 1765726007.366016,
       "iteration": 1,
       "scenario": "burst_traffic",
       "description": "High concurrency burst: PPS and throughput durability.",
@@ -215,30 +215,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 721,
-        "timeout": 1,
-        "error": 78,
+        "success": 800,
+        "timeout": 0,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 62717,
-        "bytes_received": 2756346,
-        "nacks_sent": 354,
+        "bytes_sent": 51506,
+        "bytes_received": 596280,
+        "nacks_sent": 37,
         "request_retries": 35,
-        "latency_avg_sec": 0.386,
-        "latency_p95_sec": 0.6554,
-        "latency_p99_sec": 0.7721,
-        "elapsed_sec": 24.518,
-        "rps": 32.63
+        "latency_avg_sec": 0.0159,
+        "latency_p95_sec": 0.0422,
+        "latency_p99_sec": 0.0516,
+        "elapsed_sec": 0.758,
+        "rps": 1055.88
       }
     },
     {
-      "timestamp": 1765723225.785002,
+      "timestamp": 1765726008.8724298,
       "iteration": 1,
       "scenario": "multistream_sustained",
       "description": "Mid-load sustained run: watch for leaks and drift.",
@@ -262,7 +262,7 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
@@ -273,19 +273,19 @@
         "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 23600,
-        "bytes_received": 1343600,
+        "bytes_sent": 24000,
+        "bytes_received": 301200,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 0.6347,
-        "latency_p95_sec": 0.8159,
-        "latency_p99_sec": 0.8541,
-        "elapsed_sec": 8.388,
-        "rps": 47.69
+        "latency_avg_sec": 0.0811,
+        "latency_p95_sec": 0.1361,
+        "latency_p99_sec": 0.1558,
+        "elapsed_sec": 1.205,
+        "rps": 331.83
       }
     },
     {
-      "timestamp": 1765723252.8375192,
+      "timestamp": 1765726009.3767245,
       "iteration": 1,
       "scenario": "flap_drop",
       "description": "Intermittent drop: 20% loss + small delay to verify recovery.",
@@ -309,30 +309,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 116,
-        "timeout": 8,
-        "error": 26,
+        "success": 150,
+        "timeout": 0,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 16903,
-        "bytes_received": 541600,
-        "nacks_sent": 170,
-        "request_retries": 27,
-        "latency_avg_sec": 0.3264,
-        "latency_p95_sec": 0.5643,
-        "latency_p99_sec": 0.5782,
-        "elapsed_sec": 26.908,
-        "rps": 5.57
+        "bytes_sent": 11656,
+        "bytes_received": 109278,
+        "nacks_sent": 32,
+        "request_retries": 24,
+        "latency_avg_sec": 0.0026,
+        "latency_p95_sec": 0.0059,
+        "latency_p99_sec": 0.0088,
+        "elapsed_sec": 0.3,
+        "rps": 499.29
       }
     },
     {
-      "timestamp": 1765723272.3828206,
+      "timestamp": 1765726017.4146416,
       "iteration": 1,
       "scenario": "flap_harsh",
       "description": "Harsh flap: 1.3s interval blackouts (0.25s) + light loss; focus on recovery.",
@@ -356,30 +356,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 170,
+        "success": 200,
         "timeout": 0,
-        "error": 30,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 25294,
-        "bytes_received": 757538,
-        "nacks_sent": 234,
-        "request_retries": 78,
-        "latency_avg_sec": 1.3332,
-        "latency_p95_sec": 2.026,
-        "latency_p99_sec": 2.423,
-        "elapsed_sec": 16.306,
-        "rps": 12.27
+        "bytes_sent": 16268,
+        "bytes_received": 147336,
+        "nacks_sent": 16,
+        "request_retries": 61,
+        "latency_avg_sec": 0.1466,
+        "latency_p95_sec": 0.5445,
+        "latency_p99_sec": 0.7786,
+        "elapsed_sec": 5.176,
+        "rps": 38.64
       }
     },
     {
-      "timestamp": 1765723277.0421796,
+      "timestamp": 1765726020.1265929,
       "iteration": 1,
       "scenario": "flap_recovery_tuned",
       "description": "Gentler flap: shorter blackout with heartbeat/retry emphasis.",
@@ -403,30 +403,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 181,
+        "success": 200,
         "timeout": 0,
-        "error": 19,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 17012,
-        "bytes_received": 702081,
-        "nacks_sent": 103,
-        "request_retries": 22,
-        "latency_avg_sec": 0.3057,
-        "latency_p95_sec": 0.6927,
-        "latency_p99_sec": 0.9524,
-        "elapsed_sec": 3.782,
-        "rps": 52.88
+        "bytes_sent": 14540,
+        "bytes_received": 147540,
+        "nacks_sent": 10,
+        "request_retries": 36,
+        "latency_avg_sec": 0.0653,
+        "latency_p95_sec": 0.3223,
+        "latency_p99_sec": 0.4039,
+        "elapsed_sec": 1.047,
+        "rps": 191.05
       }
     },
     {
-      "timestamp": 1765723281.553197,
+      "timestamp": 1765726021.131474,
       "iteration": 1,
       "scenario": "mtu_variation_like",
       "description": "MTU variation approximation: smaller buffer + mild loss/jitter.",
@@ -450,30 +450,30 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 229,
+        "success": 240,
         "timeout": 0,
-        "error": 11,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 17595,
-        "bytes_received": 821840,
-        "nacks_sent": 64,
-        "request_retries": 17,
-        "latency_avg_sec": 0.3924,
-        "latency_p95_sec": 0.6718,
-        "latency_p99_sec": 0.6984,
-        "elapsed_sec": 4.222,
-        "rps": 56.84
+        "bytes_sent": 15920,
+        "bytes_received": 178068,
+        "nacks_sent": 10,
+        "request_retries": 19,
+        "latency_avg_sec": 0.0527,
+        "latency_p95_sec": 0.0906,
+        "latency_p99_sec": 0.1053,
+        "elapsed_sec": 0.586,
+        "rps": 409.85
       }
     },
     {
-      "timestamp": 1765723283.0591552,
+      "timestamp": 1765726021.6367557,
       "iteration": 1,
       "scenario": "gz_large_body",
       "description": "10MB body via demo server to stress compression/streaming.",
@@ -497,7 +497,7 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 10000000,
@@ -508,19 +508,19 @@
         "timeout": 0,
         "error": 0,
         "exceptions": 0,
-        "bytes_sent": 354,
-        "bytes_received": 20154,
+        "bytes_sent": 360,
+        "bytes_received": 4518,
         "nacks_sent": 0,
         "request_retries": 0,
-        "latency_avg_sec": 0.4786,
-        "latency_p95_sec": 0.5678,
-        "latency_p99_sec": 0.5678,
-        "elapsed_sec": 1.497,
-        "rps": 4.01
+        "latency_avg_sec": 0.0026,
+        "latency_p95_sec": 0.0028,
+        "latency_p99_sec": 0.0028,
+        "elapsed_sec": 0.041,
+        "rps": 146.9
       }
     },
     {
-      "timestamp": 1765723330.138482,
+      "timestamp": 1765726025.6492248,
       "iteration": 1,
       "scenario": "sw_fetch_3000_like",
       "description": "3000-fetch like load with mild loss/jitter.",
@@ -544,26 +544,26 @@
         "initial_retry_delay": 0.0,
         "demo_server": false,
         "urls": [
-          "https://google.com"
+          "https://example.com"
         ],
         "url_file": null,
         "demo_body_size": 0,
         "demo_body_file": null
       },
       "summary": {
-        "success": 2760,
-        "timeout": 5,
-        "error": 235,
+        "success": 3000,
+        "timeout": 0,
+        "error": 0,
         "exceptions": 0,
-        "bytes_sent": 255743,
-        "bytes_received": 10214166,
-        "nacks_sent": 931,
-        "request_retries": 735,
-        "latency_avg_sec": 0.8457,
-        "latency_p95_sec": 1.9421,
-        "latency_p99_sec": 3.7886,
-        "elapsed_sec": 46.923,
-        "rps": 63.93
+        "bytes_sent": 185488,
+        "bytes_received": 2248392,
+        "nacks_sent": 56,
+        "request_retries": 56,
+        "latency_avg_sec": 0.0978,
+        "latency_p95_sec": 0.2424,
+        "latency_p99_sec": 0.2782,
+        "elapsed_sec": 3.617,
+        "rps": 829.31
       }
     }
   ]
