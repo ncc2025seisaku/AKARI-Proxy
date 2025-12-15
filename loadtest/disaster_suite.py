@@ -302,6 +302,72 @@ def _status_emoji(success: int, timeout: int, error: int, requests: int) -> str:
     return "⚠️"
 
 
+def _status_label(success: int, timeout: int, error: int, requests: int) -> str:
+    """モノスペース想定の端末用ラベル（全てASCII幅1）。"""
+    if error > 0:
+        return "ERR"
+    if timeout > 0:
+        return "TO"
+    if success == requests:
+        return "OK"
+    return "WARN"
+
+
+def _render_table(headers: list[str], rows: list[list[str]]) -> str:
+    """依存ライブラリなしで整形した表を返す。"""
+    if not rows:
+        return "（データなし）"
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def _fmt(row: list[str]) -> str:
+        return " | ".join(cell.ljust(widths[i]) for i, cell in enumerate(row))
+
+    lines = [_fmt(headers), "-+-".join("-" * w for w in widths)]
+    lines.extend(_fmt(row) for row in rows)
+    return "\n".join(lines)
+
+
+def build_terminal_summary(history_path: Path) -> str:
+    """最新履歴をターミナル向けテーブルとして整形。"""
+    latest = _latest_records_by_scenario(history_path)
+    if not latest:
+        return "最新履歴がありません。"
+
+    scenarios = sorted(latest.keys())
+    headers = ["状態", "シナリオ", "成功/総数", "成功率", "Timeout", "Error", "p95遅延", "RPS", "実行時間"]
+    rows: list[list[str]] = []
+    for key in scenarios:
+        rec = latest[key]
+        summary = rec.get("summary", {})
+        runtime = rec.get("runtime", {})
+        req = int(runtime.get("requests", summary.get("success", 0)))
+        success = int(summary.get("success", 0))
+        timeout = int(summary.get("timeout", 0))
+        error = int(summary.get("error", 0))
+        p95 = float(summary.get("latency_p95_sec", 0.0) or 0.0)
+        rps = float(summary.get("rps", 0.0) or 0.0)
+        elapsed = float(summary.get("elapsed_sec", 0.0) or 0.0)
+        success_rate = (success / req * 100) if req else 0.0
+        status = _status_label(success, timeout, error, req)
+        rows.append(
+            [
+                status,
+                key,
+                f"{success}/{req}",
+                f"{success_rate:.1f}%",
+                str(timeout),
+                str(error),
+                _format_ms(p95),
+                f"{rps:.1f}",
+                f"{elapsed:.3f}s",
+            ]
+        )
+    return _render_table(headers, rows)
+
+
 def build_markdown_report(*, history_path: Path, run_started_at: float, run_finished_at: float) -> str:
     latest = _latest_records_by_scenario(history_path)
     if not latest:
@@ -501,6 +567,11 @@ def main(argv: list[str] | None = None) -> None:
             run_finished_at=finished_at,
         )
         report_path.write_text(report_md, encoding="utf-8")
+
+    # ターミナル向けテーブル出力
+    terminal_table = build_terminal_summary(history_path)
+    print("\n=== Disaster Suite Summary ===")
+    print(terminal_table)
 
 
 if __name__ == "__main__":
