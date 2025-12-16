@@ -21,6 +21,18 @@ USER_AGENT = "AKARI-Proxy/0.1"
 # Prefer Brotli for効率, fallback to gzip/deflate.
 ACCEPT_ENCODING = "br, gzip, deflate"
 
+# セキュリティ関連ヘッダのブラックリスト（iframe埋め込みやCSP制約を除去）
+HEADERS_BLACKLIST = {
+    "x-frame-options",
+    "content-security-policy",
+    "content-security-policy-report-only",
+}
+
+
+def _strip_security_headers(headers: dict[str, str]) -> dict[str, str]:
+    """ブラックリストに含まれるセキュリティヘッダを除去する。"""
+    return {k: v for k, v in headers.items() if k.lower() not in HEADERS_BLACKLIST}
+
 
 class HttpResponse(TypedDict):
     """外部プロキシが AKARI-UDP に返却する前の素のレスポンス情報。"""
@@ -109,7 +121,7 @@ def fetch(
             headers = {key: value for key, value in resp.getheaders()}
             return {
                 "status_code": resp.getcode(),
-                "headers": headers,
+                "headers": _strip_security_headers(headers),
                 "body": body,
             }
     except error.HTTPError as exc:
@@ -160,7 +172,7 @@ async def fetch_async(
                 headers = {k: v for k, v in resp.headers.items()}
                 return {
                     "status_code": resp.status,
-                    "headers": headers,
+                    "headers": _strip_security_headers(headers),
                     "body": body,
                 }
         except asyncio.TimeoutError as exc:

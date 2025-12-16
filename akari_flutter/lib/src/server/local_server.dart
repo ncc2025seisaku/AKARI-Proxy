@@ -296,14 +296,15 @@ class LocalProxyServer {
   }
 
   Future<Response> _proxyRequest(String targetUrl) async {
-    final client = _akariClient;
-    if (client == null) {
-      return Response(503,
-          body: 'Proxy not initialized',
-          headers: {'Content-Type': 'text/plain; charset=utf-8'});
-    }
-
     try {
+      // Create a new client for each request to enable parallelism
+      // (The shared client uses Mutex which serializes all requests)
+      final client = await AkariClient.newInstance(
+        host: config.remoteHost,
+        port: config.remotePort,
+        psk: config.psk,
+      );
+
       // Send request via Rust AkariClient
       final requestConfig = defaultRequestConfig();
       final akariResponse = await client.sendRequest(
