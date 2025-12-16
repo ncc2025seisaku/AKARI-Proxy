@@ -4,6 +4,9 @@ members = [
     "crates/akari_udp_core",
     "crates/akari_udp_py",
 ]
+exclude = [
+    "akari_flutter",
+]
 
 [workspace.metadata]
 # workspace-level metadata (if needed)

@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Akari Web Proxy</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --text: #f6f2ea;
+        --muted: rgba(246, 242, 234, 0.65);
+        --accent: #f3c45c;
+        font-family: "Inter", "SF Pro Display", "Yu Gothic", system-ui, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text);
+        text-rendering: optimizeLegibility;
+        padding: 2rem;
+        overflow: hidden;
+        transition: background 0.25s ease;
+        background-attachment: fixed;
+        background: #0a0a0a;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: url("logo.png");
+        background-position: center;
+        background-repeat: no-repeat;
+        /* Viewport の長辺が埋まるまで拡大（縦横どちらかが画面サイズ上限に届く） */
+        background-size: min(100vw, 100vh);
+        opacity: 0.3;
+        filter: blur(1.5px) brightness(1.25);
+        mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0) 72%);
+        mask-mode: alpha;
+        transform: translateY(-2%);
+        pointer-events: none;
+        transition: filter 0.25s ease, opacity 0.25s ease;
+        z-index: -2;
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at center, rgba(10, 10, 10, 0) 40%, rgba(10, 10, 10, 0.35) 70%, rgba(10, 10, 10, 0.75) 90%, rgba(10, 10, 10, 0.95) 95%, rgba(10, 10, 10, 0) 100%),
+          radial-gradient(circle, rgba(10, 10, 10, 0.15), rgba(10, 10, 10, 0));
+        mix-blend-mode: soft-light;
+        z-index: -1;
+      }
+
+      body.focused::before {
+        opacity: 0.12;
+        filter: blur(8px);
+      }
+
+      main {
+        position: relative;
+        width: min(520px, 100%);
+        max-width: 520px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.3rem;
+      }
+
+      h1 {
+        margin: 0 0 1.1rem;
+        letter-spacing: 0.18rem;
+        font-size: clamp(2.4rem, 3vw, 2.9rem);
+      }
+
+      .liquid-glass {
+        width: min(460px, 90vw);
+        border-radius: 56px;
+        position: relative;
+        isolation: isolate;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1.15rem;
+        border: none;
+        background: none;
+        padding: 2.25rem 2.5rem 1.75rem;
+        margin: 0 auto;
+        text-decoration: none;
+      }
+
+      .filter-card {
+        margin-top: 0.4rem;
+        padding-top: 2rem;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .panel-eyebrow {
+        font-size: 0.8rem;
+        letter-spacing: 0.12rem;
+        color: var(--muted);
+        margin: 0 0 0.2rem;
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 1.2rem;
+        letter-spacing: 0.04rem;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.28rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        font-size: 0.9rem;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .pill.success {
+        color: #0f0;
+        border-color: rgba(0, 255, 0, 0.35);
+        background: rgba(0, 255, 0, 0.08);
+      }
+
+      .pill.danger {
+        color: #ff8080;
+        border-color: rgba(255, 128, 128, 0.35);
+        background: rgba(255, 128, 128, 0.08);
+      }
+
+      .toggle-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+        margin-top: 1.2rem;
+      }
+
+      .toggle {
+        position: relative;
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.8rem 0.9rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        cursor: pointer;
+        transition: border-color 0.2s ease, background 0.2s ease;
+      }
+
+      .toggle:hover {
+        border-color: rgba(255, 255, 255, 0.24);
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .toggle input {
+        position: absolute;
+        opacity: 0;
+        inset: 0;
+        cursor: pointer;
+      }
+
+      .switch {
+        width: 52px;
+        height: 28px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.32);
+        position: relative;
+        flex-shrink: 0;
+        transition: background 0.18s ease, border-color 0.18s ease;
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #0a0a0a;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+        transition: transform 0.18s ease, background 0.18s ease;
+      }
+
+      .toggle input:checked + .switch {
+        background: rgba(243, 196, 92, 0.85);
+        border-color: rgba(243, 196, 92, 0.9);
+      }
+
+      .toggle input:checked + .switch::after {
+        transform: translateX(22px);
+        background: #1b1205;
+      }
+
+      .toggle-body {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+      }
+
+      .toggle-title {
+        font-weight: 600;
+        letter-spacing: 0.02rem;
+      }
+
+      .toggle-desc {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .filter-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .ghost {
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        border-radius: 12px;
+        padding: 0.45rem 0.9rem;
+        cursor: pointer;
+        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+      }
+
+      .ghost:hover {
+        border-color: rgba(243, 196, 92, 0.9);
+        background: rgba(243, 196, 92, 0.12);
+        transform: translateY(-1px);
+      }
+
+      .muted-text {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .input-area {
+        width: 100%;
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        position: relative;
+        padding: 0.9rem 1rem;
+        border-radius: 26px;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .input-area canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .input-area > input,
+      .input-area > button {
+        position: relative;
+        z-index: 1;
+      }
+
+      .input-area input {
+        flex: 1;
+        border: 1px solid transparent;
+        border-radius: 14px;
+        background: rgba(0, 0, 0, 0.3);
+        box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.3);
+        color: var(--text);
+        font-size: 1.1rem;
+        font-weight: 500;
+        padding: 0.35rem 0.5rem;
+        line-height: 1.6;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .input-area input::placeholder {
+        color: rgba(246, 242, 234, 0.75);
+      }
+
+      .input-area input:focus-visible {
+        border-color: rgba(243, 196, 92, 0.9);
+        box-shadow: 0 0 0 2px rgba(243, 196, 92, 0.3);
+        background: rgba(0, 0, 0, 0.4);
+        outline: none;
+      }
+
+      .input-area button {
+        border: none;
+        border-radius: 14px;
+        padding: 0.65rem 1.4rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.05rem;
+        background: linear-gradient(135deg, rgba(255, 216, 137, 0.95), rgba(191, 141, 41, 0.9));
+        color: #08060a;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 10px 24px rgba(223, 140, 41, 0.45);
+      }
+
+      .input-area button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 16px 26px rgba(223, 140, 41, 0.55);
+      }
+
+      .input-area button:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(255, 209, 106, 0.45), 0 16px 26px rgba(223, 140, 41, 0.4);
+      }
+
+      body.focused .input-area {
+        border-color: rgba(255, 255, 255, 0.6);
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+
+      #sourceImage {
+        display: none;
+      }
+
+      @media (max-width: 520px) {
+        body {
+          padding: 1.2rem;
+        }
+
+        .liquid-glass {
+          padding: 1.6rem 1.4rem 1.2rem;
+        }
+
+        .input-area {
+          flex-direction: column;
+          gap: 0.65rem;
+        }
+
+        .input-area button {
+          width: 100%;
+          padding: 0.55rem 0;
+        }
+
+        .toggle-grid {
+          grid-template-columns: 1fr;
+        }
+
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="searchPanel" class="liquid-glass">
+        <label class="sr-only" for="query"></label>
+        <div class="input-area">
+          <canvas id="glassCanvas"></canvas>
+          <input
+            id="query"
+            name="query"
+            type="text"
+            placeholder=""
+            autocomplete="off"
+          />
+          <button id="submitSearch" type="button">OPEN</button>
+        </div>
+      </div>
+      <div id="filterPanel" class="liquid-glass filter-card">
+        <div class="panel-header">
+          <div>
+            <p class="panel-eyebrow">CONTENT FILTER</p>
+            <p class="panel-title">配信フィルター</p>
+          </div>
+          <span id="filterStatus" class="pill">同期中...</span>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle">
+            <input id="toggleJs" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">JS</span>
+              <span class="toggle-desc">script / module の読み込み</span>
+            </div>
+          </label>
+          <label class="toggle">
+            <input id="toggleCss" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">CSS</span>
+              <span class="toggle-desc">スタイルシートの読み込み</span>
+            </div>
+          </label>
+          <label class="toggle">
+            <input id="toggleImg" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">IMG</span>
+              <span class="toggle-desc">画像リソースの取得</span>
+            </div>
+          </label>
+          <label class="toggle">
+            <input id="toggleOther" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">Other</span>
+              <span class="toggle-desc">その他のリソース (拡張子なし含む)</span>
+            </div>
+          </label>
+          <label class="toggle">
+            <input id="toggleEncrypt" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <div class="toggle-body">
+              <span class="toggle-title">Encrypt (E)</span>
+              <span class="toggle-desc">UDP ペイロードを暗号化</span>
+            </div>
+          </label>
+        </div>
+        <div class="filter-footer">
+          <button id="allowAll" type="button" class="ghost">すべて許可する</button>
+          <span id="filterMessage" class="muted-text"></span>
+        </div>
+      </div>
+    </main>
+    <img
+      id="sourceImage"
+      style="display: none;"
+      alt=""
+    />
+    <script id="fragShader" type="x-shader/x-fragment">
+      precision mediump float;
+
+      uniform vec3 iResolution;
+      uniform float iTime;
+      uniform sampler2D iChannel0;
+
+      void mainImage(out vec4 fragColor, in vec2 fragCoord)
+      {
+        const float NUM_ZERO = 0.0;
+        const float NUM_ONE = 1.0;
+        const float NUM_HALF = 0.5;
+        const float LENS_STRENGTH = 0.012;
+        const float SAMPLE_RANGE = 3.0;
+        const float SAMPLE_OFFSET = 0.4;
+        const float EDGE_FADE = 0.06;
+        const float LIGHTING_INTENSITY = 0.18;
+
+        vec2 uv = fragCoord / iResolution.xy;
+        
+        // エッジでフェードアウトする係数
+        vec2 edgeDist = min(uv, NUM_ONE - uv);
+        float edgeFactor = smoothstep(NUM_ZERO, EDGE_FADE, min(edgeDist.x, edgeDist.y));
+        
+        // 全体に屈折効果を適用
+        vec2 center = vec2(NUM_HALF, NUM_HALF);
+        vec2 toCenter = uv - center;
+        
+        // レンズ歪み（全体に適用）
+        vec2 lens = uv + toCenter * LENS_STRENGTH * edgeFactor;
+        
+        // ブラー効果
+        fragColor = vec4(NUM_ZERO);
+        float total = NUM_ZERO;
+        for (float x = -SAMPLE_RANGE; x <= SAMPLE_RANGE; x++) {
+          for (float y = -SAMPLE_RANGE; y <= SAMPLE_RANGE; y++) {
+            vec2 offset = vec2(x, y) * SAMPLE_OFFSET / iResolution.xy;
+            fragColor += texture2D(iChannel0, offset + lens);
+            total += NUM_ONE;
+          }
+        }
+        fragColor /= total;
+        
+        // ライティング効果
+        float gradient = smoothstep(-NUM_HALF, NUM_HALF, toCenter.y) * edgeFactor;
+        fragColor += vec4(gradient * LIGHTING_INTENSITY) * edgeFactor;
+      }
+
+      void main() {
+        mainImage(gl_FragColor, gl_FragCoord.xy);
+      }
+    </script>
+    <script>
+      const queryInput = document.getElementById("query");
+      const searchButton = document.getElementById("submitSearch");
+      const canvas = document.getElementById("glassCanvas");
+      const inputArea = document.querySelector(".input-area");
+      const img = document.getElementById("sourceImage");
+      const gl = canvas.getContext("webgl");
+      const filterStatus = document.getElementById("filterStatus");
+      const filterMessage = document.getElementById("filterMessage");
+      const allowAllButton = document.getElementById("allowAll");
+      const filterToggles = {
+        enable_js: document.getElementById("toggleJs"),
+        enable_css: document.getElementById("toggleCss"),
+        enable_img: document.getElementById("toggleImg"),
+        enable_other: document.getElementById("toggleOther"),
+      };
+      const encryptToggle = document.getElementById("toggleEncrypt");
+      let filterState = { enable_js: true, enable_css: true, enable_img: true, enable_other: true };
+      let encryptEnabled = false;
+
+      const updateFocusState = () => {
+        const active = document.activeElement === queryInput || queryInput.value.trim().length > 0;
+        document.body.classList.toggle("focused", active);
+      };
+
+      queryInput.addEventListener("focus", updateFocusState);
+      queryInput.addEventListener("blur", updateFocusState);
+      queryInput.addEventListener("input", updateFocusState);
+      updateFocusState();
+
+      const normalizeUrl = (text) => {
+        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text)) {
+          return text;
+        }
+        if (text.includes(".")) {
+          return `https://${text}`;
+        }
+        return text;
+      };
+
+      const openProxy = () => {
+        const text = queryInput.value.trim();
+        if (!text) {
+          queryInput.focus();
+          return;
+        }
+        const normalized = normalizeUrl(text);
+        const params = new URLSearchParams();
+        params.set("entry", "1");
+        if (encryptEnabled) params.set("enc", "1");
+        // URL 全体をパスにエンコードし、クエリが外側に漏れないようにする
+        window.location.href = `/${encodeURIComponent(normalized)}?${params.toString()}`;
+      };
+
+      searchButton.addEventListener("click", openProxy);
+      queryInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          openProxy();
+        }
+      });
+
+      const setFilterStatus = (text, tone = "muted") => {
+        filterStatus.textContent = text;
+        filterStatus.classList.remove("success", "danger");
+        if (tone === "success") {
+          filterStatus.classList.add("success");
+        } else if (tone === "danger") {
+          filterStatus.classList.add("danger");
+        }
+      };
+
+      const updateToggleInputs = () => {
+        Object.entries(filterToggles).forEach(([key, el]) => {
+          if (!el) return;
+          el.checked = !!filterState[key];
+        });
+        if (encryptToggle) {
+          encryptToggle.checked = encryptEnabled;
+        }
+      };
+
+      const loadEncryptState = () => {
+        try {
+          const saved = localStorage.getItem("akari_encrypt");
+          encryptEnabled = saved === "1";
+        } catch (_) {
+          encryptEnabled = false;
+        }
+        updateToggleInputs();
+      };
+
+      const attachEncryptHandler = () => {
+        if (!encryptToggle) return;
+        encryptToggle.addEventListener("change", () => {
+          encryptEnabled = encryptToggle.checked;
+          try {
+            localStorage.setItem("akari_encrypt", encryptEnabled ? "1" : "0");
+          } catch (_) {
+            /* ignore */
+          }
+        });
+      };
+
+      const sendFilterUpdate = async (payload) => {
+        const res = await fetch("/api/filter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          let reason = text;
+          try {
+            const data = JSON.parse(text);
+            if (data && data.error) reason = data.error;
+          } catch (_) {
+            /* ignore */
+          }
+          throw new Error(`status ${res.status}: ${reason}`);
+        }
+        return res.json();
+      };
+
+      const syncFilterFromServer = async () => {
+        setFilterStatus("同期中...");
+        filterMessage.textContent = "";
+        try {
+          const res = await fetch("/api/filter", { cache: "no-store" });
+          if (!res.ok) {
+            throw new Error(`status ${res.status}`);
+          }
+          const data = await res.json();
+          filterState = { ...filterState, ...data };
+          updateToggleInputs();
+          setFilterStatus("最新", "success");
+        } catch (err) {
+          setFilterStatus("失敗", "danger");
+          filterMessage.textContent = `設定取得に失敗しました: ${err.message}`;
+        }
+      };
+
+      const attachToggleHandlers = () => {
+        Object.entries(filterToggles).forEach(([key, el]) => {
+          if (!el) return;
+          el.addEventListener("change", async () => {
+            const next = el.checked;
+            el.disabled = true;
+            try {
+              const data = await sendFilterUpdate({ [key]: next });
+              filterState = { ...filterState, ...data };
+              updateToggleInputs();
+              setFilterStatus("反映済み", "success");
+              filterMessage.textContent = "";
+            } catch (err) {
+              filterState[key] = !next;
+              updateToggleInputs();
+              setFilterStatus("失敗", "danger");
+              filterMessage.textContent = `更新に失敗しました: ${err.message}`;
+            } finally {
+              el.disabled = false;
+            }
+          });
+        });
+      };
+
+      allowAllButton.addEventListener("click", async () => {
+        allowAllButton.disabled = true;
+        try {
+          const data = await sendFilterUpdate({ enable_js: true, enable_css: true, enable_img: true, enable_other: true });
+          filterState = { ...filterState, ...data };
+          updateToggleInputs();
+          setFilterStatus("すべて許可", "success");
+          filterMessage.textContent = "";
+        } catch (err) {
+          setFilterStatus("失敗", "danger");
+          filterMessage.textContent = `更新に失敗しました: ${err.message}`;
+        } finally {
+          allowAllButton.disabled = false;
+        }
+      });
+
+      attachEncryptHandler();
+      loadEncryptState();
+      attachToggleHandlers();
+      syncFilterFromServer();
+
+      // WebGL Setup
+      const captureBackground = () => {
+        const rect = inputArea.getBoundingClientRect();
+        const tempCanvas = document.createElement('canvas');
+        const ctx = tempCanvas.getContext('2d');
+        
+        tempCanvas.width = rect.width;
+        tempCanvas.height = rect.height;
+        
+        // 暗い背景色（ロゴと同じ色）
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // logo.png があれば描画
+        const logoImg = new Image();
+        logoImg.src = 'logo.png';
+        logoImg.onload = () => {
+          ctx.globalAlpha = 0.24;
+          ctx.filter = 'blur(1.5px)';
+          const logoSize = Math.min(rect.width, rect.height) * 0.8;
+          ctx.drawImage(
+            logoImg,
+            (rect.width - logoSize) / 2,
+            (rect.height - logoSize) / 2 - rect.height * 0.02,
+            logoSize,
+            logoSize
+          );
+          img.src = tempCanvas.toDataURL();
+        };
+        
+        // ロゴ読み込み失敗時のフォールバック
+        logoImg.onerror = () => {
+          img.src = tempCanvas.toDataURL();
+        };
+        
+        return tempCanvas;
+      };
+
+      const setCanvasSize = () => {
+        const rect = inputArea.getBoundingClientRect();
+        const width = Math.max(1, Math.floor(rect.width));
+        const height = Math.max(1, Math.floor(rect.height));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+          
+          // 背景を再キャプチャ
+          const bgCanvas = captureBackground();
+          img.src = bgCanvas.toDataURL();
+        }
+      };
+
+      const adjustLayout = () => {
+        setCanvasSize();
+      };
+
+      adjustLayout();
+      window.addEventListener("resize", adjustLayout);
+
+      if (!gl) {
+        console.error("WebGL がサポートされていません。");
+      } else {
+        const vsSource = `
+          attribute vec2 position;
+          void main() {
+            gl_Position = vec4(position, 0.0, 1.0);
+          }
+        `;
+        const fsSource = document.getElementById("fragShader").textContent;
+
+        const createShader = (type, source) => {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error("Shader error:", gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+          }
+          return shader;
+        };
+
+        const vs = createShader(gl.VERTEX_SHADER, vsSource);
+        const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+        const program = gl.createProgram();
+
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(
+          gl.ARRAY_BUFFER,
+          new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+          gl.STATIC_DRAW
+        );
+
+        const position = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(position);
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+
+        const uniforms = {
+          resolution: gl.getUniformLocation(program, "iResolution"),
+          time: gl.getUniformLocation(program, "iTime"),
+          texture: gl.getUniformLocation(program, "iChannel0"),
+        };
+
+        const texture = gl.createTexture();
+        
+        let textureReady = false;
+        const setupTexture = () => {
+          if (img.src && img.complete) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA,
+              gl.RGBA,
+              gl.UNSIGNED_BYTE,
+              img
+            );
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            textureReady = true;
+          }
+        };
+
+        img.onload = setupTexture;
+        
+        // 初期背景をキャプチャ
+        const bgCanvas = captureBackground();
+        img.src = bgCanvas.toDataURL();
+
+        const startTime = performance.now();
+        const render = () => {
+          if (!textureReady) {
+            requestAnimationFrame(render);
+            return;
+          }
+          
+          const currentTime = (performance.now() - startTime) / 1000;
+
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+
+          gl.uniform3f(uniforms.resolution, canvas.width, canvas.height, 1.0);
+          gl.uniform1f(uniforms.time, currentTime);
+
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.uniform1i(uniforms.texture, 0);
+
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          requestAnimationFrame(render);
+        };
+
+        render();
+      }
+    </script>
+  </body>
+</html>

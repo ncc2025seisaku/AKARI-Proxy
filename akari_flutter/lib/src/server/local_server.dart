@@ -1,0 +1,396 @@
+/// Local HTTP proxy server for AKARI.
+///
+/// This server runs on localhost and handles HTTP requests by forwarding them
+/// through the AKARI-UDP protocol via the Rust backend.
+library;
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart';
+
+import '../rust/api/akari_client.dart';
+import 'rewriter.dart';
+
+/// Configuration for the local proxy server.
+class ProxyServerConfig {
+  final String host;
+  final int port;
+  final String remoteHost;
+  final int remotePort;
+  final List<int> psk;
+  final bool useEncryption;
+
+  const ProxyServerConfig({
+    this.host = '127.0.0.1',
+    this.port = 8080,
+    required this.remoteHost,
+    required this.remotePort,
+    required this.psk,
+    this.useEncryption = false,
+  });
+}
+
+/// Local HTTP proxy server.
+class LocalProxyServer {
+  final ProxyServerConfig config;
+  HttpServer? _server;
+  final Router _router = Router();
+  AkariClient? _akariClient;
+  late final ProxyRewriterConfig _rewriterConfig;
+
+  LocalProxyServer(this.config) {
+    _rewriterConfig = ProxyRewriterConfig(
+      proxyBase: 'http://${config.host}:${config.port}/',
+      useEncryption: config.useEncryption,
+    );
+    _setupRoutes();
+  }
+
+  // Content filter state
+  bool _enableJs = true;
+  bool _enableCss = true;
+  bool _enableImg = true;
+  bool _enableOther = true;
+
+  void _setupRoutes() {
+    // Health check endpoint
+    _router.get('/healthz', _handleHealthz);
+
+    // Static files
+    _router.get('/', _handleIndex);
+    _router.get('/index.html', _handleIndex);
+    _router.get('/logo.png', _handleStaticFile);
+    _router.get('/favicon.ico', _handleStaticFile);
+    _router.get('/sw-akari.js', _handleStaticFile);
+
+    // Filter API
+    _router.get('/api/filter', _handleFilterGet);
+    _router.post('/api/filter', _handleFilterPost);
+
+    // Proxy endpoints
+    _router.get('/proxy', _handleProxy);
+    _router.get('/api/proxy', _handleProxy);
+    _router.post('/proxy', _handleProxyPost);
+    _router.post('/api/proxy', _handleProxyPost);
+
+    // Path-based proxy (catch-all for /{encoded-url})
+    _router.get('/<url|.+>', _handlePathProxy);
+  }
+
+  /// Handle GET /api/filter - return current filter state
+  Response _handleFilterGet(Request request) {
+    return Response.ok(
+      jsonEncode({
+        'enable_js': _enableJs,
+        'enable_css': _enableCss,
+        'enable_img': _enableImg,
+        'enable_other': _enableOther,
+      }),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    );
+  }
+
+  /// Handle POST /api/filter - update filter state
+  Future<Response> _handleFilterPost(Request request) async {
+    try {
+      final body = await request.readAsString();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+
+      if (data.containsKey('enable_js')) {
+        _enableJs = data['enable_js'] == true;
+      }
+      if (data.containsKey('enable_css')) {
+        _enableCss = data['enable_css'] == true;
+      }
+      if (data.containsKey('enable_img')) {
+        _enableImg = data['enable_img'] == true;
+      }
+      if (data.containsKey('enable_other')) {
+        _enableOther = data['enable_other'] == true;
+      }
+
+      return Response.ok(
+        jsonEncode({
+          'enable_js': _enableJs,
+          'enable_css': _enableCss,
+          'enable_img': _enableImg,
+          'enable_other': _enableOther,
+        }),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      );
+    } catch (e) {
+      return Response(400,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'});
+    }
+  }
+
+  /// Serve index.html
+  Future<Response> _handleIndex(Request request) async {
+    return _serveStaticFile('index.html', 'text/html; charset=utf-8');
+  }
+
+  /// Serve static files
+  Future<Response> _handleStaticFile(Request request) async {
+    final path = request.url.path;
+    final filename = path.startsWith('/') ? path.substring(1) : path;
+    
+    String contentType;
+    if (filename.endsWith('.png')) {
+      contentType = 'image/png';
+    } else if (filename.endsWith('.ico')) {
+      contentType = 'image/x-icon';
+    } else if (filename.endsWith('.js')) {
+      contentType = 'application/javascript; charset=utf-8';
+    } else if (filename.endsWith('.html')) {
+      contentType = 'text/html; charset=utf-8';
+    } else if (filename.endsWith('.css')) {
+      contentType = 'text/css; charset=utf-8';
+    } else {
+      contentType = 'application/octet-stream';
+    }
+    
+    return _serveStaticFile(filename, contentType);
+  }
+
+  Future<Response> _serveStaticFile(String filename, String contentType) async {
+    try {
+      // Get the directory where this script is located
+      final scriptDir = Platform.script.resolve('.').toFilePath();
+      // Navigate to lib/src/server/static from the build output
+      final staticDir = Directory('${scriptDir}data/flutter_assets/packages/akari_flutter/lib/src/server/static');
+      
+      // Fallback for development: use relative path from project root
+      Directory actualStaticDir;
+      if (await staticDir.exists()) {
+        actualStaticDir = staticDir;
+      } else {
+        // Development mode - use lib directory directly
+        actualStaticDir = Directory('lib/src/server/static');
+        if (!await actualStaticDir.exists()) {
+          return Response.notFound('Static directory not found');
+        }
+      }
+      
+      final file = File('${actualStaticDir.path}/$filename');
+      if (!await file.exists()) {
+        return Response.notFound('File not found: $filename');
+      }
+      
+      final body = await file.readAsBytes();
+      return Response.ok(
+        body,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': body.length.toString(),
+        },
+      );
+    } catch (e) {
+      return Response.internalServerError(body: 'Error serving static file: $e');
+    }
+  }
+
+  /// Start the HTTP server.
+  Future<void> start() async {
+    // Initialize AkariClient connected to remote proxy
+    _akariClient = await AkariClient.newInstance(
+      host: config.remoteHost,
+      port: config.remotePort,
+      psk: config.psk,
+    );
+
+    final handler = Pipeline()
+        .addMiddleware(logRequests())
+        .addMiddleware(_corsMiddleware())
+        .addHandler(_router.call);
+
+    _server = await shelf_io.serve(handler, config.host, config.port);
+    print('AKARI Local Proxy listening on http://${config.host}:${config.port}');
+  }
+
+  /// Stop the HTTP server.
+  Future<void> stop() async {
+    await _server?.close(force: true);
+    _server = null;
+    _akariClient = null;
+  }
+
+  /// CORS middleware for browser compatibility.
+  Middleware _corsMiddleware() {
+    return (Handler innerHandler) {
+      return (Request request) async {
+        if (request.method == 'OPTIONS') {
+          return Response.ok('', headers: _corsHeaders);
+        }
+        final response = await innerHandler(request);
+        return response.change(headers: _corsHeaders);
+      };
+    };
+  }
+
+  static const _corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+
+  // ----------------------------- Route Handlers -----------------------------
+
+  Response _handleHealthz(Request request) {
+    return Response.ok('ok', headers: {'Content-Type': 'text/plain'});
+  }
+
+  Future<Response> _handleProxy(Request request) async {
+    final url = request.url.queryParameters['url'];
+    if (url == null || url.isEmpty) {
+      return Response(400,
+          body: 'url parameter required',
+          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+    }
+    return await _proxyRequest(url);
+  }
+
+  Future<Response> _handleProxyPost(Request request) async {
+    final contentType = request.headers['content-type'] ?? '';
+    String? url;
+
+    if (contentType.contains('application/json')) {
+      try {
+        final body = await request.readAsString();
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        url = json['url'] as String?;
+      } catch (_) {
+        // Ignore JSON parse errors
+      }
+    } else if (contentType.contains('application/x-www-form-urlencoded')) {
+      final body = await request.readAsString();
+      final params = Uri.splitQueryString(body);
+      url = params['url'];
+    }
+
+    url ??= request.url.queryParameters['url'];
+
+    if (url == null || url.isEmpty) {
+      return Response(400,
+          body: 'url parameter required',
+          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+    }
+    return await _proxyRequest(url);
+  }
+
+  Future<Response> _handlePathProxy(Request request) async {
+    final encodedUrl = request.params['url'];
+    if (encodedUrl == null || encodedUrl.isEmpty) {
+      return Response.notFound('Not Found');
+    }
+
+    final url = Uri.decodeComponent(encodedUrl);
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return Response.notFound('Not Found');
+    }
+    return await _proxyRequest(url);
+  }
+
+  Future<Response> _proxyRequest(String targetUrl) async {
+    final client = _akariClient;
+    if (client == null) {
+      return Response(503,
+          body: 'Proxy not initialized',
+          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+    }
+
+    try {
+      // Send request via Rust AkariClient
+      final requestConfig = defaultRequestConfig();
+      final akariResponse = await client.sendRequest(
+        url: targetUrl,
+        config: requestConfig,
+      );
+
+      // Build response headers
+      final headers = <String, String>{
+        'X-AKARI-Target': targetUrl,
+        'X-AKARI-Status': 'rust-client',
+        'X-AKARI-Bytes-Sent': akariResponse.stats.bytesSent.toString(),
+        'X-AKARI-Bytes-Received': akariResponse.stats.bytesReceived.toString(),
+      };
+
+      // Copy headers from AKARI response
+      for (final (name, value) in akariResponse.headers) {
+        headers[name] = value;
+      }
+
+      // Strip security headers (CSP, etc.)
+      stripSecurityHeaders(headers);
+
+      // Remove Transfer-Encoding (we'll return fixed-length content)
+      headers.remove('Transfer-Encoding');
+      headers.remove('transfer-encoding');
+
+      // Handle Location header redirect
+      final location = headers['Location'] ?? headers['location'];
+      if (location != null) {
+        headers['Location'] = rewriteLocationHeader(
+          location,
+          targetUrl,
+          _rewriterConfig,
+        );
+        headers.remove('location');
+      }
+
+      // Get body and decompress if needed
+      var body = akariResponse.body.toList();
+      final (decompressedBody, decompressed) = maybeDecompress(body, headers);
+      body = decompressedBody;
+
+      // Determine content type and rewrite if needed
+      final contentType = headers['Content-Type'] ?? 
+                          headers['content-type'] ?? 
+                          'text/html; charset=utf-8';
+
+      if (decompressed) {
+        final rewriteType = getRewriteContentType(contentType);
+        switch (rewriteType) {
+          case RewriteContentType.html:
+            final text = utf8.decode(body, allowMalformed: true);
+            final rewritten = rewriteHtmlToProxy(text, targetUrl, _rewriterConfig);
+            body = utf8.encode(rewritten);
+          case RewriteContentType.css:
+            final text = utf8.decode(body, allowMalformed: true);
+            final rewritten = rewriteCssToProxy(text, targetUrl, _rewriterConfig);
+            body = utf8.encode(rewritten);
+          case RewriteContentType.javascript:
+            final text = utf8.decode(body, allowMalformed: true);
+            final rewritten = rewriteJsToProxy(text, targetUrl, _rewriterConfig);
+            body = utf8.encode(rewritten);
+          case RewriteContentType.none:
+            // No rewriting needed
+            break;
+        }
+      }
+
+      // Update Content-Length
+      headers['Content-Length'] = body.length.toString();
+
+      // Set Content-Type if not present
+      if (!headers.containsKey('Content-Type') && 
+          !headers.containsKey('content-type')) {
+        headers['Content-Type'] = 'text/html; charset=utf-8';
+      }
+
+      return Response(
+        akariResponse.statusCode,
+        body: body,
+        headers: headers,
+      );
+    } catch (e) {
+      return Response(502,
+          body: 'Proxy error: $e',
+          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+    }
+  }
+}

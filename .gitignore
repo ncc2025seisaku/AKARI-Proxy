@@ -18,6 +18,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!akari_flutter/lib/
 lib64/
 parts/
 sdist/
