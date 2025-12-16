@@ -633,3 +633,141 @@ class AkariUdpClient:
             if seq not in acc.chunks:
                 return seq
         return None
+
+
+# ---------- Rust-backed client ----------
+
+class RustBackedAkariUdpClient:
+    """
+    AKARI-UDP v3 client using the Rust implementation.
+    
+    This client delegates all communication logic to the Rust `AkariClient`,
+    providing the same interface as `AkariUdpClient` but with Rust-native
+    retransmission, NACK handling, and timeout management.
+    """
+
+    def __init__(
+        self,
+        remote_addr: tuple[str, int],
+        psk: bytes,
+        *,
+        timeout: float | None = None,
+        max_nack_rounds: int | None = 3,
+        initial_request_retries: int = 1,
+        sock_timeout: float = 1.0,
+        first_seq_timeout: float = 0.5,
+        df: bool = True,
+        agg_tag: bool = True,
+        payload_max: int | None = None,
+        short_id: bool = False,
+        # Ignored legacy parameters for compatibility
+        buffer_size: int = 65535,
+        rcvbuf_bytes: int = 1_048_576,
+        protocol_version: int = 3,
+        max_ack_rounds: int = 0,
+        use_encryption: bool = False,
+        plpmtud: bool = False,
+    ):
+        from akari_udp_py import AkariClient, RequestConfig
+
+        self._remote_addr = remote_addr
+        self._psk = psk
+        self._timeout = timeout if timeout is not None else 10.0
+
+        # Create Rust client
+        host, port = remote_addr
+        self._rust_client = AkariClient(host, port, psk)
+
+        # Store config for each request
+        self._config = RequestConfig(
+            timeout_ms=int(self._timeout * 1000) if self._timeout > 0 else 0,
+            max_nack_rounds=max_nack_rounds,
+            initial_request_retries=initial_request_retries,
+            sock_timeout_ms=int(sock_timeout * 1000),
+            first_seq_timeout_ms=int(first_seq_timeout * 1000),
+            df=df,
+            agg_tag=agg_tag,
+            payload_max=payload_max,
+            short_id=short_id,
+        )
+
+        self._message_id = 0
+        self._lock = threading.Lock()
+
+    def send_request(
+        self,
+        url: str,
+        message_id: int,
+        timestamp: int,
+        *,
+        datagram: bytes | None = None,
+    ) -> ResponseOutcome:
+        """Send a request and wait for response. Compatible with AkariUdpClient interface."""
+        with self._lock:
+            try:
+                response = self._rust_client.send_request(
+                    url,
+                    method="GET",
+                    config=self._config,
+                )
+
+                # Convert Rust HttpResponse to ResponseOutcome
+                stats = response.stats
+                headers = dict(response.headers)
+
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],  # Not tracked in Rust version
+                    body=bytes(response.body),
+                    status_code=response.status_code,
+                    headers=headers,
+                    error=None,
+                    complete=True,
+                    timed_out=False,
+                    bytes_sent=stats.bytes_sent,
+                    bytes_received=stats.bytes_received,
+                    nacks_sent=stats.nacks_sent,
+                    request_retries=stats.request_retries,
+                )
+
+            except TimeoutError:
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],
+                    body=None,
+                    status_code=None,
+                    headers=None,
+                    error=None,
+                    complete=False,
+                    timed_out=True,
+                    bytes_sent=0,
+                    bytes_received=0,
+                    nacks_sent=0,
+                    request_retries=0,
+                )
+            except Exception as e:
+                LOGGER.error("Rust client error: %s", e)
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],
+                    body=None,
+                    status_code=None,
+                    headers=None,
+                    error={"message": str(e)},
+                    complete=False,
+                    timed_out=False,
+                    bytes_sent=0,
+                    bytes_received=0,
+                    nacks_sent=0,
+                    request_retries=0,
+                )
+
+    def close(self) -> None:
+        """Close the client. No-op for Rust client (socket managed internally)."""
+        pass
+
+    def __enter__(self) -> "RustBackedAkariUdpClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

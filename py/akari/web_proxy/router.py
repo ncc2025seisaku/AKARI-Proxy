@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin, urlencode, urlunsplit
 
-from akari.udp_client import AkariUdpClient, ResponseOutcome
+from akari.udp_client import AkariUdpClient, ResponseOutcome, RustBackedAkariUdpClient
 from .config import WebProxyConfig
 from local_proxy.content_filter import ContentCategory, ContentFilter, FilterDecision
 
@@ -198,23 +198,39 @@ class WebRouter:
 
         return self._raw_response(target_url, outcome, skip_filter=skip_filter, use_encryption=use_encryption)
 
-    def _new_udp_client(self, *, use_encryption: bool) -> AkariUdpClient:
+    def _new_udp_client(self, *, use_encryption: bool) -> AkariUdpClient | RustBackedAkariUdpClient:
         remote = self._config.remote
-        return AkariUdpClient(
-            (remote.host, remote.port),
-            remote.psk,
-            timeout=remote.timeout,
-            protocol_version=remote.protocol_version,
-            use_encryption=use_encryption,
-            df=remote.df,
-            max_nack_rounds=remote.max_nack_rounds,
-            initial_request_retries=remote.initial_request_retries,
-            first_seq_timeout=remote.first_seq_timeout,
-            sock_timeout=remote.sock_timeout,
-            agg_tag=remote.agg_tag,
-            payload_max=remote.payload_max,
-            plpmtud=remote.plpmtud,
-        )
+        if remote.use_rust_client:
+            # Use Rust-backed client (v3 only)
+            return RustBackedAkariUdpClient(
+                (remote.host, remote.port),
+                remote.psk,
+                timeout=remote.timeout,
+                max_nack_rounds=remote.max_nack_rounds,
+                initial_request_retries=remote.initial_request_retries,
+                sock_timeout=remote.sock_timeout,
+                first_seq_timeout=remote.first_seq_timeout,
+                df=remote.df,
+                agg_tag=remote.agg_tag,
+                payload_max=remote.payload_max,
+            )
+        else:
+            # Fall back to Python client
+            return AkariUdpClient(
+                (remote.host, remote.port),
+                remote.psk,
+                timeout=remote.timeout,
+                protocol_version=remote.protocol_version,
+                use_encryption=use_encryption,
+                df=remote.df,
+                max_nack_rounds=remote.max_nack_rounds,
+                initial_request_retries=remote.initial_request_retries,
+                first_seq_timeout=remote.first_seq_timeout,
+                sock_timeout=remote.sock_timeout,
+                agg_tag=remote.agg_tag,
+                payload_max=remote.payload_max,
+                plpmtud=remote.plpmtud,
+            )
 
     # ------------------------------- response shaping -------------------------------
     def _raw_response(

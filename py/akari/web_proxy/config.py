@@ -22,7 +22,7 @@ class RemoteProxyConfig:
     port: int
     psk: bytes = b""
     timeout: float | None = None
-    protocol_version: int = 2
+    protocol_version: int = 3
     agg_tag: bool = True
     payload_max: int = 1200
     df: bool = True
@@ -31,6 +31,7 @@ class RemoteProxyConfig:
     max_nack_rounds: int = 2
     first_seq_timeout: float = 0.5
     sock_timeout: float = 1.0
+    use_rust_client: bool = True  # Use Rust-backed client by default
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ def load_config(path: str | Path) -> WebProxyConfig:
         port=_require_port(remote_data, "port", default=9000),
         psk=_parse_psk(remote_data),
         timeout=timeout_opt,
-        protocol_version=int(remote_data.get("protocol_version", 2)),
+        protocol_version=int(remote_data.get("protocol_version", 3)),
         agg_tag=_require_bool(remote_data, "agg_tag", default=True),
         payload_max=int(remote_data.get("payload_max", 1200)),
         df=_require_bool(remote_data, "df", default=True),
@@ -80,6 +81,7 @@ def load_config(path: str | Path) -> WebProxyConfig:
         max_nack_rounds=int(remote_data.get("max_nack_rounds", 2)),
         first_seq_timeout=float(remote_data.get("first_seq_timeout", 0.5)),
         sock_timeout=float(remote_data.get("sock_timeout", 1.0)),
+        use_rust_client=_require_bool(remote_data, "use_rust_client", default=True),
     )
 
     filter_data = data.get("content_filter", {})

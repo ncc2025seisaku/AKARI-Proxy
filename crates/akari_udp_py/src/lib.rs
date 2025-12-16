@@ -5,6 +5,8 @@ use akari_udp_core::{
     encode_response_first_chunk_v2, encode_error_v3, encode_nack_body_v3, encode_nack_head_v3, encode_request_v3,
     encode_resp_body_v3_agg,
     AkariError, Header, HeaderV3, MessageType, PacketTypeV3, Payload, PayloadV3, RequestMethod, ResponseChunk,
+    AkariClient as RustAkariClient, RequestConfig as RustRequestConfig, HttpResponse as RustHttpResponse,
+    TransferStats as RustTransferStats, ClientError,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -478,6 +480,202 @@ fn debug_dump_py(datagram: &[u8], psk: &[u8]) -> PyResult<String> {
     debug_dump(datagram, psk).map_err(map_error)
 }
 
+// ---------- High-level client ----------
+
+/// Request configuration for the AKARI-UDP client.
+#[pyclass]
+#[derive(Clone)]
+struct RequestConfig {
+    inner: RustRequestConfig,
+}
+
+#[pymethods]
+impl RequestConfig {
+    #[new]
+    #[pyo3(signature = (
+        timeout_ms = 10000,
+        max_nack_rounds = Some(3),
+        initial_request_retries = 1,
+        sock_timeout_ms = 1000,
+        first_seq_timeout_ms = 500,
+        df = true,
+        agg_tag = true,
+        payload_max = None,
+        short_id = false
+    ))]
+    fn new(
+        timeout_ms: u64,
+        max_nack_rounds: Option<u32>,
+        initial_request_retries: u32,
+        sock_timeout_ms: u64,
+        first_seq_timeout_ms: u64,
+        df: bool,
+        agg_tag: bool,
+        payload_max: Option<u32>,
+        short_id: bool,
+    ) -> Self {
+        Self {
+            inner: RustRequestConfig {
+                timeout_ms,
+                max_nack_rounds,
+                initial_request_retries,
+                sock_timeout_ms,
+                first_seq_timeout_ms,
+                df,
+                agg_tag,
+                payload_max,
+                short_id,
+            },
+        }
+    }
+
+    #[getter]
+    fn timeout_ms(&self) -> u64 {
+        self.inner.timeout_ms
+    }
+
+    #[getter]
+    fn max_nack_rounds(&self) -> Option<u32> {
+        self.inner.max_nack_rounds
+    }
+
+    #[getter]
+    fn initial_request_retries(&self) -> u32 {
+        self.inner.initial_request_retries
+    }
+
+    #[getter]
+    fn agg_tag(&self) -> bool {
+        self.inner.agg_tag
+    }
+}
+
+/// Transfer statistics from a completed request.
+#[pyclass]
+#[derive(Clone)]
+struct TransferStats {
+    #[pyo3(get)]
+    bytes_sent: u64,
+    #[pyo3(get)]
+    bytes_received: u64,
+    #[pyo3(get)]
+    nacks_sent: u32,
+    #[pyo3(get)]
+    request_retries: u32,
+}
+
+impl From<RustTransferStats> for TransferStats {
+    fn from(s: RustTransferStats) -> Self {
+        Self {
+            bytes_sent: s.bytes_sent,
+            bytes_received: s.bytes_received,
+            nacks_sent: s.nacks_sent,
+            request_retries: s.request_retries,
+        }
+    }
+}
+
+/// HTTP response from the remote proxy.
+#[pyclass]
+#[derive(Clone)]
+struct HttpResponse {
+    #[pyo3(get)]
+    status_code: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    stats: TransferStats,
+}
+
+#[pymethods]
+impl HttpResponse {
+    #[getter]
+    fn headers<'py>(&self, py: Python<'py>) -> PyResult<&'py PyDict> {
+        let dict = PyDict::new(py);
+        for (k, v) in &self.headers {
+            dict.set_item(k, v)?;
+        }
+        Ok(dict)
+    }
+
+    #[getter]
+    fn body<'py>(&self, py: Python<'py>) -> &'py PyBytes {
+        PyBytes::new(py, &self.body)
+    }
+
+    #[getter]
+    fn stats(&self) -> TransferStats {
+        self.stats.clone()
+    }
+}
+
+impl From<RustHttpResponse> for HttpResponse {
+    fn from(r: RustHttpResponse) -> Self {
+        Self {
+            status_code: r.status_code,
+            headers: r.headers,
+            body: r.body,
+            stats: TransferStats::from(r.stats),
+        }
+    }
+}
+
+fn map_client_error(err: ClientError) -> PyErr {
+    match err {
+        ClientError::Io(e) => pyo3::exceptions::PyIOError::new_err(e.to_string()),
+        ClientError::Timeout => pyo3::exceptions::PyTimeoutError::new_err("Request timed out"),
+        ClientError::Protocol(msg) => PyValueError::new_err(format!("Protocol error: {}", msg)),
+        ClientError::AggTagMismatch => PyValueError::new_err("Aggregate tag mismatch"),
+        ClientError::Incomplete => PyValueError::new_err("Response incomplete"),
+        ClientError::RemoteError { code, message } => {
+            PyValueError::new_err(format!("Remote error (code {}): {}", code, message))
+        }
+    }
+}
+
+/// AKARI-UDP v3 client for sending requests through the proxy.
+#[pyclass]
+struct AkariClient {
+    inner: RustAkariClient,
+    message_id_counter: std::sync::atomic::AtomicU64,
+}
+
+#[pymethods]
+impl AkariClient {
+    #[new]
+    fn new(remote_host: &str, remote_port: u16, psk: &[u8]) -> PyResult<Self> {
+        let inner = RustAkariClient::new(remote_host, remote_port, psk).map_err(map_client_error)?;
+        Ok(Self {
+            inner,
+            message_id_counter: std::sync::atomic::AtomicU64::new(1),
+        })
+    }
+
+    /// Send an HTTP request and return the response.
+    #[pyo3(signature = (url, method = "GET", config = None))]
+    fn send_request(
+        &self,
+        url: &str,
+        method: &str,
+        config: Option<RequestConfig>,
+    ) -> PyResult<HttpResponse> {
+        let cfg = config.map(|c| c.inner).unwrap_or_default();
+        let message_id = self
+            .message_id_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as u32)
+            .unwrap_or(0);
+
+        let response = self
+            .inner
+            .send_request(url, method, &[], message_id, timestamp, &cfg)
+            .map_err(map_client_error)?;
+
+        Ok(HttpResponse::from(response))
+    }
+}
+
 #[pymodule]
 fn akari_udp_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_request_py, m)?)?;
@@ -503,6 +701,11 @@ fn akari_udp_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_packet_v3_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_packet_auto_py, m)?)?;
     m.add_function(wrap_pyfunction!(debug_dump_py, m)?)?;
+    // High-level client classes
+    m.add_class::<AkariClient>()?;
+    m.add_class::<RequestConfig>()?;
+    m.add_class::<HttpResponse>()?;
+    m.add_class::<TransferStats>()?;
     Ok(())
 }
 

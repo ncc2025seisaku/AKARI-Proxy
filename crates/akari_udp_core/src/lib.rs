@@ -9,6 +9,7 @@ mod decode_v3;
 mod hmac;
 mod aead;
 mod payload;
+mod client;
 
 pub use crate::decode::decode_packet;
 pub use crate::decode_v3::decode_packet_v3;
@@ -29,6 +30,7 @@ pub use crate::header_v3::{HeaderV3, PacketTypeV3, FLAG_AGG_TAG, FLAG_SHORT_ID, 
 pub use crate::payload::{
     AckPayload, ErrorPayload, NackPayload, ParsedPacket, Payload, RequestMethod, RequestPayload, ResponseChunk,
 };
+pub use crate::client::{AkariClient, ClientError, HttpResponse, RequestConfig, TransferStats};
 
 #[cfg(test)]
 mod tests {
