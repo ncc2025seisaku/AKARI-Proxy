@@ -39,7 +39,6 @@
         background-image: url("logo.png");
         background-position: center;
         background-repeat: no-repeat;
-        /* Viewport の長辺が埋まるまで拡大（縦横どちらかが画面サイズ上限に届く） */
         background-size: min(100vw, 100vh);
         opacity: 0.3;
         filter: blur(1.5px) brightness(1.25);
@@ -79,12 +78,6 @@
         gap: 1.3rem;
       }
 
-      h1 {
-        margin: 0 0 1.1rem;
-        letter-spacing: 0.18rem;
-        font-size: clamp(2.4rem, 3vw, 2.9rem);
-      }
-
       .liquid-glass {
         width: min(460px, 90vw);
         border-radius: 56px;
@@ -99,167 +92,6 @@
         padding: 2.25rem 2.5rem 1.75rem;
         margin: 0 auto;
         text-decoration: none;
-      }
-
-      .filter-card {
-        margin-top: 0.4rem;
-        padding-top: 2rem;
-      }
-
-      .panel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 1rem;
-      }
-
-      .panel-eyebrow {
-        font-size: 0.8rem;
-        letter-spacing: 0.12rem;
-        color: var(--muted);
-        margin: 0 0 0.2rem;
-      }
-
-      .panel-title {
-        margin: 0;
-        font-size: 1.2rem;
-        letter-spacing: 0.04rem;
-      }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.28rem 0.6rem;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        font-size: 0.9rem;
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      .pill.success {
-        color: #0f0;
-        border-color: rgba(0, 255, 0, 0.35);
-        background: rgba(0, 255, 0, 0.08);
-      }
-
-      .pill.danger {
-        color: #ff8080;
-        border-color: rgba(255, 128, 128, 0.35);
-        background: rgba(255, 128, 128, 0.08);
-      }
-
-      .toggle-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.75rem;
-        margin-top: 1.2rem;
-      }
-
-      .toggle {
-        position: relative;
-        display: flex;
-        gap: 0.75rem;
-        align-items: center;
-        padding: 0.8rem 0.9rem;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        cursor: pointer;
-        transition: border-color 0.2s ease, background 0.2s ease;
-      }
-
-      .toggle:hover {
-        border-color: rgba(255, 255, 255, 0.24);
-        background: rgba(255, 255, 255, 0.06);
-      }
-
-      .toggle input {
-        position: absolute;
-        opacity: 0;
-        inset: 0;
-        cursor: pointer;
-      }
-
-      .switch {
-        width: 52px;
-        height: 28px;
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.18);
-        border: 1px solid rgba(255, 255, 255, 0.32);
-        position: relative;
-        flex-shrink: 0;
-        transition: background 0.18s ease, border-color 0.18s ease;
-      }
-
-      .switch::after {
-        content: "";
-        position: absolute;
-        left: 4px;
-        top: 4px;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: #0a0a0a;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-        transition: transform 0.18s ease, background 0.18s ease;
-      }
-
-      .toggle input:checked + .switch {
-        background: rgba(243, 196, 92, 0.85);
-        border-color: rgba(243, 196, 92, 0.9);
-      }
-
-      .toggle input:checked + .switch::after {
-        transform: translateX(22px);
-        background: #1b1205;
-      }
-
-      .toggle-body {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.15rem;
-      }
-
-      .toggle-title {
-        font-weight: 600;
-        letter-spacing: 0.02rem;
-      }
-
-      .toggle-desc {
-        color: var(--muted);
-        font-size: 0.95rem;
-      }
-
-      .filter-footer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        margin-top: 1rem;
-        flex-wrap: wrap;
-      }
-
-      .ghost {
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--text);
-        border-radius: 12px;
-        padding: 0.45rem 0.9rem;
-        cursor: pointer;
-        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
-      }
-
-      .ghost:hover {
-        border-color: rgba(243, 196, 92, 0.9);
-        background: rgba(243, 196, 92, 0.12);
-        transform: translateY(-1px);
-      }
-
-      .muted-text {
-        color: var(--muted);
-        font-size: 0.95rem;
       }
 
       .input-area {
@@ -358,6 +190,12 @@
         display: none;
       }
 
+      .hint-text {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+      }
+
       @media (max-width: 520px) {
         body {
           padding: 1.2rem;
@@ -376,11 +214,6 @@
           width: 100%;
           padding: 0.55rem 0;
         }
-
-        .toggle-grid {
-          grid-template-columns: 1fr;
-        }
-
       }
     </style>
   </head>
@@ -394,66 +227,12 @@
             id="query"
             name="query"
             type="text"
-            placeholder=""
+            placeholder="URLを入力..."
             autocomplete="off"
           />
           <button id="submitSearch" type="button">OPEN</button>
         </div>
-      </div>
-      <div id="filterPanel" class="liquid-glass filter-card">
-        <div class="panel-header">
-          <div>
-            <p class="panel-eyebrow">CONTENT FILTER</p>
-            <p class="panel-title">配信フィルター</p>
-          </div>
-          <span id="filterStatus" class="pill">同期中...</span>
-        </div>
-        <div class="toggle-grid">
-          <label class="toggle">
-            <input id="toggleJs" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">JS</span>
-              <span class="toggle-desc">script / module の読み込み</span>
-            </div>
-          </label>
-          <label class="toggle">
-            <input id="toggleCss" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">CSS</span>
-              <span class="toggle-desc">スタイルシートの読み込み</span>
-            </div>
-          </label>
-          <label class="toggle">
-            <input id="toggleImg" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">IMG</span>
-              <span class="toggle-desc">画像リソースの取得</span>
-            </div>
-          </label>
-          <label class="toggle">
-            <input id="toggleOther" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">Other</span>
-              <span class="toggle-desc">その他のリソース (拡張子なし含む)</span>
-            </div>
-          </label>
-          <label class="toggle">
-            <input id="toggleEncrypt" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-            <div class="toggle-body">
-              <span class="toggle-title">Encrypt (E)</span>
-              <span class="toggle-desc">UDP ペイロードを暗号化</span>
-            </div>
-          </label>
-        </div>
-        <div class="filter-footer">
-          <button id="allowAll" type="button" class="ghost">すべて許可する</button>
-          <span id="filterMessage" class="muted-text"></span>
-        </div>
+        <p class="hint-text">設定は右上の ⚙ ボタンから変更できます</p>
       </div>
     </main>
     <img
@@ -481,18 +260,14 @@
 
         vec2 uv = fragCoord / iResolution.xy;
         
-        // エッジでフェードアウトする係数
         vec2 edgeDist = min(uv, NUM_ONE - uv);
         float edgeFactor = smoothstep(NUM_ZERO, EDGE_FADE, min(edgeDist.x, edgeDist.y));
         
-        // 全体に屈折効果を適用
         vec2 center = vec2(NUM_HALF, NUM_HALF);
         vec2 toCenter = uv - center;
         
-        // レンズ歪み（全体に適用）
         vec2 lens = uv + toCenter * LENS_STRENGTH * edgeFactor;
         
-        // ブラー効果
         fragColor = vec4(NUM_ZERO);
         float total = NUM_ZERO;
         for (float x = -SAMPLE_RANGE; x <= SAMPLE_RANGE; x++) {
@@ -504,7 +279,6 @@
         }
         fragColor /= total;
         
-        // ライティング効果
         float gradient = smoothstep(-NUM_HALF, NUM_HALF, toCenter.y) * edgeFactor;
         fragColor += vec4(gradient * LIGHTING_INTENSITY) * edgeFactor;
       }
@@ -520,18 +294,6 @@
       const inputArea = document.querySelector(".input-area");
       const img = document.getElementById("sourceImage");
       const gl = canvas.getContext("webgl");
-      const filterStatus = document.getElementById("filterStatus");
-      const filterMessage = document.getElementById("filterMessage");
-      const allowAllButton = document.getElementById("allowAll");
-      const filterToggles = {
-        enable_js: document.getElementById("toggleJs"),
-        enable_css: document.getElementById("toggleCss"),
-        enable_img: document.getElementById("toggleImg"),
-        enable_other: document.getElementById("toggleOther"),
-      };
-      const encryptToggle = document.getElementById("toggleEncrypt");
-      let filterState = { enable_js: true, enable_css: true, enable_img: true, enable_other: true };
-      let encryptEnabled = false;
 
       const updateFocusState = () => {
         const active = document.activeElement === queryInput || queryInput.value.trim().length > 0;
@@ -562,8 +324,6 @@
         const normalized = normalizeUrl(text);
         const params = new URLSearchParams();
         params.set("entry", "1");
-        if (encryptEnabled) params.set("enc", "1");
-        // URL 全体をパスにエンコードし、クエリが外側に漏れないようにする
         window.location.href = `/${encodeURIComponent(normalized)}?${params.toString()}`;
       };
 
@@ -575,131 +335,6 @@
         }
       });
 
-      const setFilterStatus = (text, tone = "muted") => {
-        filterStatus.textContent = text;
-        filterStatus.classList.remove("success", "danger");
-        if (tone === "success") {
-          filterStatus.classList.add("success");
-        } else if (tone === "danger") {
-          filterStatus.classList.add("danger");
-        }
-      };
-
-      const updateToggleInputs = () => {
-        Object.entries(filterToggles).forEach(([key, el]) => {
-          if (!el) return;
-          el.checked = !!filterState[key];
-        });
-        if (encryptToggle) {
-          encryptToggle.checked = encryptEnabled;
-        }
-      };
-
-      const loadEncryptState = () => {
-        try {
-          const saved = localStorage.getItem("akari_encrypt");
-          encryptEnabled = saved === "1";
-        } catch (_) {
-          encryptEnabled = false;
-        }
-        updateToggleInputs();
-      };
-
-      const attachEncryptHandler = () => {
-        if (!encryptToggle) return;
-        encryptToggle.addEventListener("change", () => {
-          encryptEnabled = encryptToggle.checked;
-          try {
-            localStorage.setItem("akari_encrypt", encryptEnabled ? "1" : "0");
-          } catch (_) {
-            /* ignore */
-          }
-        });
-      };
-
-      const sendFilterUpdate = async (payload) => {
-        const res = await fetch("/api/filter", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          let reason = text;
-          try {
-            const data = JSON.parse(text);
-            if (data && data.error) reason = data.error;
-          } catch (_) {
-            /* ignore */
-          }
-          throw new Error(`status ${res.status}: ${reason}`);
-        }
-        return res.json();
-      };
-
-      const syncFilterFromServer = async () => {
-        setFilterStatus("同期中...");
-        filterMessage.textContent = "";
-        try {
-          const res = await fetch("/api/filter", { cache: "no-store" });
-          if (!res.ok) {
-            throw new Error(`status ${res.status}`);
-          }
-          const data = await res.json();
-          filterState = { ...filterState, ...data };
-          updateToggleInputs();
-          setFilterStatus("最新", "success");
-        } catch (err) {
-          setFilterStatus("失敗", "danger");
-          filterMessage.textContent = `設定取得に失敗しました: ${err.message}`;
-        }
-      };
-
-      const attachToggleHandlers = () => {
-        Object.entries(filterToggles).forEach(([key, el]) => {
-          if (!el) return;
-          el.addEventListener("change", async () => {
-            const next = el.checked;
-            el.disabled = true;
-            try {
-              const data = await sendFilterUpdate({ [key]: next });
-              filterState = { ...filterState, ...data };
-              updateToggleInputs();
-              setFilterStatus("反映済み", "success");
-              filterMessage.textContent = "";
-            } catch (err) {
-              filterState[key] = !next;
-              updateToggleInputs();
-              setFilterStatus("失敗", "danger");
-              filterMessage.textContent = `更新に失敗しました: ${err.message}`;
-            } finally {
-              el.disabled = false;
-            }
-          });
-        });
-      };
-
-      allowAllButton.addEventListener("click", async () => {
-        allowAllButton.disabled = true;
-        try {
-          const data = await sendFilterUpdate({ enable_js: true, enable_css: true, enable_img: true, enable_other: true });
-          filterState = { ...filterState, ...data };
-          updateToggleInputs();
-          setFilterStatus("すべて許可", "success");
-          filterMessage.textContent = "";
-        } catch (err) {
-          setFilterStatus("失敗", "danger");
-          filterMessage.textContent = `更新に失敗しました: ${err.message}`;
-        } finally {
-          allowAllButton.disabled = false;
-        }
-      });
-
-      attachEncryptHandler();
-      loadEncryptState();
-      attachToggleHandlers();
-      syncFilterFromServer();
-
       // WebGL Setup
       const captureBackground = () => {
         const rect = inputArea.getBoundingClientRect();
@@ -709,11 +344,9 @@
         tempCanvas.width = rect.width;
         tempCanvas.height = rect.height;
         
-        // 暗い背景色（ロゴと同じ色）
         ctx.fillStyle = '#0a0a0a';
         ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
         
-        // logo.png があれば描画
         const logoImg = new Image();
         logoImg.src = 'logo.png';
         logoImg.onload = () => {
@@ -730,7 +363,6 @@
           img.src = tempCanvas.toDataURL();
         };
         
-        // ロゴ読み込み失敗時のフォールバック
         logoImg.onerror = () => {
           img.src = tempCanvas.toDataURL();
         };
@@ -746,7 +378,6 @@
           canvas.width = width;
           canvas.height = height;
           
-          // 背景を再キャプチャ
           const bgCanvas = captureBackground();
           img.src = bgCanvas.toDataURL();
         }
@@ -833,7 +464,6 @@
 
         img.onload = setupTexture;
         
-        // 初期背景をキャプチャ
         const bgCanvas = captureBackground();
         img.src = bgCanvas.toDataURL();
 

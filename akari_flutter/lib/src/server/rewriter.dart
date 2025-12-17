@@ -102,19 +102,88 @@ navigator.serviceWorker.register('$swPath',{scope:'/'}).catch(()=>{});
 const proxy=location.origin+'/';
 const enc=/[?&]enc=1(?:&|\$)/.test(location.search)||document.cookie.includes('akari_enc=1');
 let base=null;try{base=decodeURIComponent(location.pathname.slice(1));}catch(e){}
-const invalid=/^(?:data:|javascript:|mailto:|#)/i;
+const invalid=/^(?:data:|javascript:|mailto:|blob:|#)/i;
 function toProxy(u){
-if(!u||invalid.test(u)||u.startsWith(proxy))return null;
+if(!u||invalid.test(u))return null;
+if(u.startsWith(proxy))return null;
 if(u.startsWith('//'))u='https:'+u;
-try{const abs=base?new URL(u,base).href:new URL(u).href;
-let p=proxy+encodeURIComponent(abs);
-if(enc&&p.indexOf('?')===-1)p+='?enc=1';
-return p;}catch(e){return null;}
+if(u.startsWith('/')){
+try{u=base?new URL(u,base).href:new URL(u,location.href).href;}catch(_){return null;}
 }
+if(!u.startsWith('http://') && !u.startsWith('https://'))return null;
+try{
+let p=proxy+encodeURIComponent(u);
+if(enc&&p.indexOf('?')===-1)p+='?enc=1';
+return p;
+}catch(e){return null;}
+}
+
+// DOM rewriting
 function rewrite(el,attr){const v=el.getAttribute(attr);const p=toProxy(v);if(p)el.setAttribute(attr,p);}
-function scan(root){root.querySelectorAll('a[href],form[action],img[src],script[src],link[href],iframe[src]').forEach(el=>{rewrite(el,el.hasAttribute('href')?'href':'src');});}
+function scan(root){root.querySelectorAll('a[href],form[action],img[src],script[src],link[href],iframe[src],video[src],source[src],audio[src]').forEach(el=>{
+const attr=el.hasAttribute('href')?'href':(el.hasAttribute('action')?'action':'src');
+rewrite(el,attr);
+});}
 function onClick(e){const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;const p=toProxy(a.getAttribute('href'));if(p){e.preventDefault();location.assign(p);}}
-function onSubmit(e){const f=e.target.closest&&e.target.closest('form[action]');if(!f)return;const p=toProxy(f.getAttribute('action'));if(p)f.action=p;}
+function onSubmit(e){
+const f=e.target.closest&&e.target.closest('form');
+if(!f)return;
+const actionUrl=f.getAttribute('action')||location.href;
+const method=(f.method||'GET').toUpperCase();
+let absAction;
+try{absAction=base?new URL(actionUrl,base).href:new URL(actionUrl,location.href).href;}catch(_){absAction=actionUrl;}
+if(method==='GET'){
+e.preventDefault();
+e.stopPropagation();
+const formData=new FormData(f);
+const params=new URLSearchParams(formData);
+const sep=absAction.includes('?')?'&':'?';
+const fullUrl=absAction+sep+params.toString();
+let proxied=proxy+encodeURIComponent(fullUrl);
+if(enc&&proxied.indexOf('?')===-1)proxied+='?enc=1';
+location.assign(proxied);
+}else{
+const p=toProxy(absAction);
+if(p)f.action=p;
+}
+}
+
+// Intercept fetch()
+const origFetch=window.fetch;
+window.fetch=function(input,init){
+let url=(typeof input==='string')?input:(input instanceof Request)?input.url:String(input);
+const proxied=toProxy(url);
+if(proxied){
+if(typeof input==='string'){
+input=proxied;
+}else if(input instanceof Request){
+input=new Request(proxied,input);
+}else{
+input=proxied;
+}
+}
+return origFetch.call(this,input,init);
+};
+
+// Intercept XMLHttpRequest
+const origXHROpen=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=function(method,url,...args){
+const proxied=toProxy(url);
+return origXHROpen.call(this,method,proxied||url,...args);
+};
+
+// Intercept WebSocket (limited support - just log for now)
+const OrigWebSocket=window.WebSocket;
+window.WebSocket=function(url,protocols){
+console.warn('[AKARI] WebSocket connection attempted:',url,'- WebSocket proxying not supported');
+return new OrigWebSocket(url,protocols);
+};
+window.WebSocket.prototype=OrigWebSocket.prototype;
+window.WebSocket.CONNECTING=OrigWebSocket.CONNECTING;
+window.WebSocket.OPEN=OrigWebSocket.OPEN;
+window.WebSocket.CLOSING=OrigWebSocket.CLOSING;
+window.WebSocket.CLOSED=OrigWebSocket.CLOSED;
+
 scan(document);
 document.addEventListener('click',onClick,true);
 document.addEventListener('submit',onSubmit,true);
@@ -275,13 +344,31 @@ String rewriteLocationHeader(
   }
 }
 
+/// Security headers that interfere with proxy operation.
+const _securityHeaderBlacklist = {
+  // iframe embedding restrictions
+  'x-frame-options',
+  // Content Security Policy
+  'content-security-policy',
+  'content-security-policy-report-only',
+  // HTTPS enforcement (problematic when proxy uses HTTP)
+  'strict-transport-security',
+  // Cross-origin restrictions
+  'cross-origin-opener-policy',
+  'cross-origin-embedder-policy',
+  'cross-origin-resource-policy',
+  // Other security headers
+  'x-xss-protection',
+  'x-content-type-options',
+  'permissions-policy',
+  'feature-policy', // legacy name
+};
+
 /// Strip security headers that may interfere with proxy operation.
 void stripSecurityHeaders(Map<String, String> headers) {
   final keysToRemove = <String>[];
   for (final key in headers.keys) {
-    final lk = key.toLowerCase();
-    if (lk == 'content-security-policy' || 
-        lk == 'content-security-policy-report-only') {
+    if (_securityHeaderBlacklist.contains(key.toLowerCase())) {
       keysToRemove.add(key);
     }
   }

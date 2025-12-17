@@ -166,6 +166,38 @@ void main() {
       
       expect(headers.isEmpty, isTrue);
     });
+
+    test('removes X-Frame-Options headers', () {
+      final headers = <String, String>{
+        'Content-Type': 'text/html',
+        'X-Frame-Options': 'DENY',
+      };
+      
+      stripSecurityHeaders(headers);
+      
+      expect(headers.containsKey('X-Frame-Options'), isFalse);
+      expect(headers.containsKey('Content-Type'), isTrue);
+    });
+
+    test('removes all security headers', () {
+      final headers = <String, String>{
+        'Content-Type': 'text/html',
+        'X-Frame-Options': 'DENY',
+        'Content-Security-Policy': "default-src 'self'",
+        'Strict-Transport-Security': 'max-age=31536000',
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Resource-Policy': 'same-origin',
+        'X-XSS-Protection': '1; mode=block',
+        'X-Content-Type-Options': 'nosniff',
+        'Permissions-Policy': 'camera=()',
+      };
+      
+      stripSecurityHeaders(headers);
+      
+      expect(headers.length, 1);
+      expect(headers.containsKey('Content-Type'), isTrue);
+    });
   });
 
   group('Location header rewriting', () {

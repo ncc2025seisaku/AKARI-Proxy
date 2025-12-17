@@ -41,6 +41,7 @@ dependencies:
   shelf: ^1.4.2
   shelf_router: ^1.1.4
   webview_windows: ^0.4.0
+  shared_preferences: ^2.2.0
 
 dev_dependencies:
   flutter_test:

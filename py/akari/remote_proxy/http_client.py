@@ -21,11 +21,24 @@ USER_AGENT = "AKARI-Proxy/0.1"
 # Prefer Brotli for効率, fallback to gzip/deflate.
 ACCEPT_ENCODING = "br, gzip, deflate"
 
-# セキュリティ関連ヘッダのブラックリスト（iframe埋め込みやCSP制約を除去）
+# セキュリティ関連ヘッダのブラックリスト（プロキシ動作を妨げるヘッダを除去）
 HEADERS_BLACKLIST = {
+    # iframe埋め込み制限
     "x-frame-options",
+    # コンテンツセキュリティポリシー
     "content-security-policy",
     "content-security-policy-report-only",
+    # HTTPS強制（プロキシがHTTPで動作する場合に問題）
+    "strict-transport-security",
+    # クロスオリジン制限
+    "cross-origin-opener-policy",
+    "cross-origin-embedder-policy",
+    "cross-origin-resource-policy",
+    # その他のセキュリティヘッダ
+    "x-xss-protection",
+    "x-content-type-options",
+    "permissions-policy",
+    "feature-policy",  # 旧名
 }
 
 
@@ -95,12 +108,16 @@ def fetch(
     """
 
     normalized_url = _normalize_url(url)
+    parsed = parse.urlparse(normalized_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
     req = request.Request(
         normalized_url,
         method="GET",
         headers={
             "User-Agent": USER_AGENT,
             "Accept-Encoding": ACCEPT_ENCODING,
+            "Referer": origin + "/",
+            "Origin": origin,
         },
     )
 
@@ -150,6 +167,8 @@ async def fetch_async(
         raise RuntimeError("aiohttp がインストールされていません") from exc
 
     normalized_url = _normalize_url(url)
+    parsed = parse.urlparse(normalized_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
     timeout_cfg = aiohttp.ClientTimeout(total=timeout, sock_read=timeout, sock_connect=timeout)
 
     async def _do(session_obj: "aiohttp.ClientSession") -> HttpResponse:
@@ -159,6 +178,8 @@ async def fetch_async(
                 headers={
                     "User-Agent": USER_AGENT,
                     "Accept-Encoding": ACCEPT_ENCODING,
+                    "Referer": origin + "/",
+                    "Origin": origin,
                 },
                 allow_redirects=True,
                 compress=False,  # 明示的に圧縮解除をさせない（raw転送）
