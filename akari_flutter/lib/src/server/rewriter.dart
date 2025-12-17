@@ -5,6 +5,9 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:brotli/brotli.dart' as brotli;
 
 /// Proxy URL generator configuration.
 class ProxyRewriterConfig {
@@ -32,10 +35,10 @@ String rewriteHtmlToProxy(
   var text = html;
   final baseUrl = sourceUrl;
 
-  // Rewrite href/src/action attributes
-  // Pattern: (href|src|action)="..." or '...'
+  // Rewrite href/src attributes (NOT action - JavaScript handles forms)
+  // Pattern: (href|src)="..." or '...'
   final attrPattern = RegExp(
-    r'''(\b(?:href|src|action)\s*=\s*["'])([^"']+)''',
+    r'''(\b(?:href|src)\s*=\s*["'])([^"']+)''',
     caseSensitive: false,
   );
   text = text.replaceAllMapped(attrPattern, (m) {
@@ -103,14 +106,29 @@ const proxy=location.origin+'/';
 const enc=/[?&]enc=1(?:&|\$)/.test(location.search)||document.cookie.includes('akari_enc=1');
 let base=null;try{base=decodeURIComponent(location.pathname.slice(1));}catch(e){}
 const invalid=/^(?:data:|javascript:|mailto:|blob:|#)/i;
+const proxyPatterns=[proxy,'http://localhost:'+location.port+'/','http://127.0.0.1:'+location.port+'/'];
+function isProxied(u){return proxyPatterns.some(p=>u.startsWith(p));}
+// Clean up base if it contains a double-proxied URL
+function extractRealUrl(u){
+  if(!u)return null;
+  for(const p of proxyPatterns){
+    if(u.startsWith(p)){
+      try{return extractRealUrl(decodeURIComponent(u.slice(p.length)));}catch(_){return null;}
+    }
+  }
+  return u.startsWith('http://')||u.startsWith('https://')?u:null;
+}
+if(base&&isProxied(base)){base=extractRealUrl(base);}
+console.log('[AKARI Debug] base:', base, 'pathname:', location.pathname);
 function toProxy(u){
 if(!u||invalid.test(u))return null;
-if(u.startsWith(proxy))return null;
+if(isProxied(u))return null;
 if(u.startsWith('//'))u='https:'+u;
 if(u.startsWith('/')){
 try{u=base?new URL(u,base).href:new URL(u,location.href).href;}catch(_){return null;}
 }
 if(!u.startsWith('http://') && !u.startsWith('https://'))return null;
+if(isProxied(u))return null;
 try{
 let p=proxy+encodeURIComponent(u);
 if(enc&&p.indexOf('?')===-1)p+='?enc=1';
@@ -118,20 +136,26 @@ return p;
 }catch(e){return null;}
 }
 
-// DOM rewriting
+// DOM rewriting (forms handled by onSubmit, not here)
 function rewrite(el,attr){const v=el.getAttribute(attr);const p=toProxy(v);if(p)el.setAttribute(attr,p);}
-function scan(root){root.querySelectorAll('a[href],form[action],img[src],script[src],link[href],iframe[src],video[src],source[src],audio[src]').forEach(el=>{
-const attr=el.hasAttribute('href')?'href':(el.hasAttribute('action')?'action':'src');
+function scan(root){root.querySelectorAll('a[href],img[src],script[src],link[href],iframe[src],video[src],source[src],audio[src]').forEach(el=>{
+const attr=el.hasAttribute('href')?'href':'src';
 rewrite(el,attr);
 });}
-function onClick(e){const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;const p=toProxy(a.getAttribute('href'));if(p){e.preventDefault();location.assign(p);}}
+function onClick(e){const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;let href=a.getAttribute('href');if(isProxied(href))href=extractRealUrl(href);const p=toProxy(href);if(p){e.preventDefault();location.assign(p);}}
 function onSubmit(e){
 const f=e.target.closest&&e.target.closest('form');
 if(!f)return;
-const actionUrl=f.getAttribute('action')||location.href;
+const actionUrl=f.getAttribute('action')||'';
 const method=(f.method||'GET').toUpperCase();
 let absAction;
-try{absAction=base?new URL(actionUrl,base).href:new URL(actionUrl,location.href).href;}catch(_){absAction=actionUrl;}
+// Resolve relative action URL using base (the original page URL)
+if(actionUrl.startsWith('http://')||actionUrl.startsWith('https://')){
+  absAction=actionUrl;
+}else{
+  try{absAction=base?new URL(actionUrl||'',base).href:null;}catch(_){absAction=null;}
+}
+if(!absAction)return;
 if(method==='GET'){
 e.preventDefault();
 e.stopPropagation();
@@ -143,8 +167,9 @@ let proxied=proxy+encodeURIComponent(fullUrl);
 if(enc&&proxied.indexOf('?')===-1)proxied+='?enc=1';
 location.assign(proxied);
 }else{
-const p=toProxy(absAction);
-if(p)f.action=p;
+let proxied=proxy+encodeURIComponent(absAction);
+if(enc&&proxied.indexOf('?')===-1)proxied+='?enc=1';
+f.action=proxied;
 }
 }
 
@@ -273,8 +298,18 @@ String _toProxyUrl(String url, String baseUrl, ProxyRewriterConfig config) {
     return url;
   }
   
-  // Already proxied
+  // Already proxied - check for both localhost and 127.0.0.1 patterns
   if (url.startsWith(config.proxyBase)) {
+    return url;
+  }
+  
+  // Extract port from proxyBase to check for alternative host patterns
+  final proxyUri = Uri.parse(config.proxyBase);
+  final port = proxyUri.port;
+  final localhostPattern = 'http://localhost:$port/';
+  final ipPattern = 'http://127.0.0.1:$port/';
+  
+  if (url.startsWith(localhostPattern) || url.startsWith(ipPattern)) {
     return url;
   }
 
@@ -331,6 +366,8 @@ String rewriteLocationHeader(
         decompressed = gzip.decode(body);
       case 'deflate':
         decompressed = zlib.decode(body);
+      case 'br':
+        decompressed = brotli.decode(Uint8List.fromList(body));
       default:
         // Unknown encoding, return as-is
         return (body, false);

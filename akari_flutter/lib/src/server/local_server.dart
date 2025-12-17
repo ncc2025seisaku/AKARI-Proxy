@@ -288,10 +288,28 @@ class LocalProxyServer {
       return Response.notFound('Not Found');
     }
 
-    final url = Uri.decodeComponent(encodedUrl);
+    var url = Uri.decodeComponent(encodedUrl);
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return Response.notFound('Not Found');
     }
+    
+    // Merge query parameters from the proxy URL into the target URL
+    // This handles cases like Google redirects that add ?sei=xxx to the proxy URL
+    final proxyQuery = request.url.queryParameters;
+    if (proxyQuery.isNotEmpty) {
+      // Filter out AKARI-specific params
+      final targetParams = Map<String, String>.from(proxyQuery)
+        ..remove('enc')
+        ..remove('_akari_ref');
+      
+      if (targetParams.isNotEmpty) {
+        final targetUri = Uri.parse(url);
+        final mergedParams = Map<String, String>.from(targetUri.queryParameters)
+          ..addAll(targetParams);
+        url = targetUri.replace(queryParameters: mergedParams).toString();
+      }
+    }
+    
     return await _proxyRequest(url);
   }
 
@@ -353,24 +371,34 @@ class LocalProxyServer {
                           headers['content-type'] ?? 
                           'text/html; charset=utf-8';
 
-      if (decompressed) {
-        final rewriteType = getRewriteContentType(contentType);
-        switch (rewriteType) {
-          case RewriteContentType.html:
-            final text = utf8.decode(body, allowMalformed: true);
-            final rewritten = rewriteHtmlToProxy(text, targetUrl, _rewriterConfig);
-            body = utf8.encode(rewritten);
-          case RewriteContentType.css:
-            final text = utf8.decode(body, allowMalformed: true);
-            final rewritten = rewriteCssToProxy(text, targetUrl, _rewriterConfig);
-            body = utf8.encode(rewritten);
-          case RewriteContentType.javascript:
-            final text = utf8.decode(body, allowMalformed: true);
-            final rewritten = rewriteJsToProxy(text, targetUrl, _rewriterConfig);
-            body = utf8.encode(rewritten);
-          case RewriteContentType.none:
-            // No rewriting needed
-            break;
+      final rewriteType = getRewriteContentType(contentType);
+      
+      // Try to rewrite even if decompression failed (failsoft approach)
+      // This handles cases where we get uncompressed content or when
+      // the encoding is unsupported (like Brotli)
+      if (rewriteType != RewriteContentType.none) {
+        try {
+          switch (rewriteType) {
+            case RewriteContentType.html:
+              final text = utf8.decode(body, allowMalformed: true);
+              // Only rewrite if it looks like valid HTML (contains < character)
+              if (text.contains('<')) {
+                final rewritten = rewriteHtmlToProxy(text, targetUrl, _rewriterConfig);
+                body = utf8.encode(rewritten);
+              }
+            case RewriteContentType.css:
+              final text = utf8.decode(body, allowMalformed: true);
+              final rewritten = rewriteCssToProxy(text, targetUrl, _rewriterConfig);
+              body = utf8.encode(rewritten);
+            case RewriteContentType.javascript:
+              final text = utf8.decode(body, allowMalformed: true);
+              final rewritten = rewriteJsToProxy(text, targetUrl, _rewriterConfig);
+              body = utf8.encode(rewritten);
+            case RewriteContentType.none:
+              break;
+          }
+        } catch (_) {
+          // If rewriting fails (e.g., binary data), keep original body
         }
       }
 
