@@ -43,12 +43,20 @@ jobs:
 
       - name: Setup Android NDK
         run: |
-          # Install the NDK version required by Flutter
-          echo "Installing NDK 28.0.12674087..."
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.0.12674087"
-          # Set NDK path in local.properties
-          echo "ndk.dir=$ANDROID_HOME/ndk/28.0.12674087" > akari_flutter/android/local.properties
-          echo "NDK installed at: $ANDROID_HOME/ndk/28.0.12674087"
+          # List available NDK versions
+          echo "Available NDK versions:"
+          ls -la $ANDROID_HOME/ndk/ || echo "No NDK directory found"
+          
+          # Find the latest installed NDK version
+          NDK_VERSION=$(ls $ANDROID_HOME/ndk/ | sort -V | tail -1)
+          echo "Using NDK version: $NDK_VERSION"
+          
+          # Set NDK path in local.properties  
+          echo "ndk.dir=$ANDROID_HOME/ndk/$NDK_VERSION" > akari_flutter/android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> akari_flutter/android/local.properties
+          
+          # Set environment variable for cargo-ndk
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
 
       - name: Get Flutter dependencies
         working-directory: akari_flutter

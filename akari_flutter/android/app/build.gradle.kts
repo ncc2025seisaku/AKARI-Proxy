@@ -8,7 +8,8 @@ plugins {
 android {
     namespace = "com.akari.akari_flutter"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Use NDK version from local.properties or environment
+    ndkVersion = System.getenv("ANDROID_NDK_VERSION") ?: flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
