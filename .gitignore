@@ -19,6 +19,7 @@ eggs/
 .eggs/
 lib/
 !akari_flutter/lib/
+!akari_flutter/rust_builder/cargokit/build_tool/lib/
 lib64/
 parts/
 sdist/
