@@ -173,12 +173,46 @@ jobs:
       - name: Build iOS app without code signing
         working-directory: akari_flutter
         run: |
-          flutter build ios --release --no-codesign
+          # First, run flutter build to generate native code
+          flutter build ios --release --no-codesign --config-only
+          
+          # Then use xcodebuild with explicit code signing disabled
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            PROVISIONING_PROFILE_SPECIFIER='' \
+            EXPANDED_CODE_SIGN_IDENTITY='' \
+            BUILD_DIR=../build/ios \
+            -archivePath ../build/ios/Runner.xcarchive \
+            archive
+
 
       - name: Create unsigned IPA
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          APP_PATH="akari_flutter/build/ios/iphoneos/Runner.app"
+          
+          # Find the .app in the archive or build directory
+          # xcodebuild archive puts it in the xcarchive/Products/Applications folder
+          ARCHIVE_APP="akari_flutter/build/ios/Runner.xcarchive/Products/Applications/Runner.app"
+          BUILD_APP="akari_flutter/build/ios/Release-iphoneos/Runner.app"
+          
+          if [ -d "$ARCHIVE_APP" ]; then
+            APP_PATH="$ARCHIVE_APP"
+          elif [ -d "$BUILD_APP" ]; then
+            APP_PATH="$BUILD_APP"
+          else
+            # Fallback: find any Runner.app
+            APP_PATH=$(find akari_flutter/build/ios -name "Runner.app" -type d | head -1)
+          fi
+          
+          echo "Using app at: $APP_PATH"
           
           # Create Payload directory structure
           mkdir -p Payload
@@ -189,6 +223,7 @@ jobs:
           
           # Clean up
           rm -rf Payload
+
 
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
