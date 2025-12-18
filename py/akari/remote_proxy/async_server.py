@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence, Callable, Awaitable
 
-from akari_udp_py import decode_packet_py
+from akari_udp_py import decode_packet_auto_py, decode_packet_v3_py
 
 from ..udp_server import IncomingRequest
 from .config import ConfigError, load_config
@@ -93,15 +93,52 @@ async def _process_datagram(
     *,
     psk: bytes,
     handler: Callable[[IncomingRequest], Awaitable[Sequence[bytes]]],
+    payload_max: int | None = None,
+    buffer_size: int | None = None,
 ) -> Sequence[bytes] | None:
     try:
-        parsed = decode_packet_py(data, psk)
+        # v3 はフォールバック不要なので明示的に先に試し、失敗したらそのままエラーを返す
+        if len(data) >= 3 and data[2] == 3:
+            parsed = decode_packet_v3_py(data, psk)
+        else:
+            parsed = decode_packet_auto_py(data, psk)
     except ValueError as exc:
         message = str(exc) or exc.__class__.__name__
-        if message in {"HMAC mismatch", "invalid PSK"}:
-            LOGGER.warning("discard packet from %s: %s (PSK mismatch?)", addr, message)
+        prefix = data[:32].hex()
+        if message in {"HMAC mismatch", "invalid PSK", "AEAD encrypt/decrypt failed"}:
+            LOGGER.warning(
+                "discard packet from %s: %s (len=%d prefix=%s)",
+                addr,
+                message,
+                len(data),
+                prefix,
+            )
+            if len(data) >= 10 and data[2] == 3:
+                # v3ヘッダをざっくりデコードしてヒントを出す
+                flags = data[4]
+                short_id = bool(flags & 0x20)
+                hdr_len = 14 if short_id else 20
+                if len(data) >= hdr_len:
+                    msg_id = int.from_bytes(data[6 : 6 + (2 if short_id else 8)], "big")
+                    seq = int.from_bytes(data[6 + (2 if short_id else 8) : 8 + (2 if short_id else 8)], "big")
+                    seq_total = int.from_bytes(
+                        data[8 + (2 if short_id else 8) : 10 + (2 if short_id else 8)], "big"
+                    )
+                    payload_len = int.from_bytes(
+                        data[10 + (2 if short_id else 8) : 12 + (2 if short_id else 8)], "big"
+                    )
+                    LOGGER.warning(
+                        "v3 header peek: flags=0x%x short_id=%s msg_id=%d seq=%d seq_total=%d payload_len=%d hdr_len=%d",
+                        flags,
+                        short_id,
+                        msg_id,
+                        seq,
+                        seq_total,
+                        payload_len,
+                        hdr_len,
+                    )
         else:
-            LOGGER.warning("discard packet from %s: %s", addr, message)
+            LOGGER.warning("discard packet from %s: %s (len=%d prefix=%s)", addr, message, len(data), prefix)
         return None
     except Exception:
         LOGGER.exception("unexpected error while processing datagram from %s", addr)
@@ -116,6 +153,8 @@ async def _process_datagram(
             parsed=parsed,
             datagram=data,
             psk=psk,
+            buffer_size=buffer_size or 65535,
+            payload_max=payload_max,
         )
         LOGGER.debug(
             "decoded packet type=%s msg=%s ver=%s from=%s",
@@ -135,6 +174,11 @@ async def serve_remote_proxy_async(
     port: int,
     *,
     psk: bytes,
+    protocol_version: int = 2,
+    agg_tag: bool = True,
+    payload_max: int = 1200,
+    df: bool = True,
+    plpmtud: bool = False,
     buffer_size: int = DEFAULT_RCVBUF,
     session_pool_size: int = DEFAULT_SESSION_POOL_SIZE,
     logger: logging.Logger | None = None,
@@ -160,6 +204,8 @@ async def serve_remote_proxy_async(
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     sock.setblocking(True)  # 同期受信で ConnectionResetError を握り潰す
+    if df:
+        _set_df(sock, logger)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buffer_size)
         actual_rcvbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
@@ -182,8 +228,17 @@ async def serve_remote_proxy_async(
 
     set_fetch_async_func(pooled_fetch_async)
 
+    dyn_payload_max = _dynamic_payload_cap(sock, payload_max) if plpmtud else payload_max
+
     async def handle_and_send(data: bytes, addr) -> None:
-        datagrams = await _process_datagram(data, addr, psk=psk, handler=handle_request_async)
+        datagrams = await _process_datagram(
+            data,
+            addr,
+            psk=psk,
+            handler=handle_request_async,
+            payload_max=dyn_payload_max,
+            buffer_size=buffer_size,
+        )
         if not datagrams:
             return
         for dg in datagrams:
@@ -227,6 +282,36 @@ def parse_psk(value: str, *, hex_mode: bool) -> bytes:
         return bytes.fromhex(value)
     return value.encode("utf-8")
 
+def _dynamic_payload_cap(sock: socket.socket, configured: int | None) -> int | None:
+    mtu: int | None = None
+    try:
+        if hasattr(socket, "IP_MTU"):
+            mtu = sock.getsockopt(socket.IPPROTO_IP, socket.IP_MTU)
+        elif hasattr(socket, "IPV6_MTU"):
+            mtu = sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU)
+    except OSError:
+        mtu = None
+
+    base = configured
+    if mtu and mtu > 0:
+        estimated = max(256, mtu - 120)
+        base = estimated if base is None else min(base, estimated)
+    return base
+
+def _set_df(sock: socket.socket, logger: logging.Logger) -> None:
+    try:
+        if hasattr(socket, "IP_MTU_DISCOVER") and hasattr(socket, "IP_PMTUDISC_DO"):
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MTU_DISCOVER, socket.IP_PMTUDISC_DO)
+        if hasattr(socket, "IPV6_MTU_DISCOVER") and hasattr(socket, "IPV6_PMTUDISC_DO"):
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU_DISCOVER, socket.IPV6_PMTUDISC_DO)
+    except OSError:
+        logger.debug("could not enable PMTUD (IPv4/IPv6) on async server socket")
+    try:
+        if hasattr(socket, "IP_DONTFRAGMENT"):
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
+    except OSError:
+        logger.debug("could not set IP_DONTFRAGMENT on async server socket")
+
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run AKARI remote UDP server (async)")
@@ -254,6 +339,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             config.host,
             config.port,
             psk=config.psk,
+            protocol_version=config.protocol_version,
+            agg_tag=config.agg_tag,
+            payload_max=config.payload_max,
+            df=config.df,
+            plpmtud=config.plpmtud,
             buffer_size=config.buffer_size,
             session_pool_size=DEFAULT_SESSION_POOL_SIZE,
             request_timeout=config.timeout or DEFAULT_TIMEOUT,
@@ -269,4 +359,3 @@ def run(argv: Iterable[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

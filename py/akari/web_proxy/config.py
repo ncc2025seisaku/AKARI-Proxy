@@ -20,8 +20,18 @@ class UIConfig:
 class RemoteProxyConfig:
     host: str
     port: int
-    psk: bytes
-    timeout: float
+    psk: bytes = b""
+    timeout: float | None = None
+    protocol_version: int = 3
+    agg_tag: bool = True
+    payload_max: int = 1200
+    df: bool = True
+    plpmtud: bool = False
+    initial_request_retries: int = 1
+    max_nack_rounds: int = 2
+    first_seq_timeout: float = 0.5
+    sock_timeout: float = 1.0
+    use_rust_client: bool = True  # Use Rust-backed client by default
 
 
 @dataclass(frozen=True)
@@ -54,11 +64,24 @@ def load_config(path: str | Path) -> WebProxyConfig:
     )
 
     remote_data = data.get("remote", {})
+    timeout_value = _require_float(remote_data, "timeout", default=0.0)
+    timeout_opt = None if timeout_value <= 0 else timeout_value
+
     remote = RemoteProxyConfig(
         host=_require_str(remote_data, "host", default="127.0.0.1"),
         port=_require_port(remote_data, "port", default=9000),
         psk=_parse_psk(remote_data),
-        timeout=_require_float(remote_data, "timeout", default=2.0),
+        timeout=timeout_opt,
+        protocol_version=int(remote_data.get("protocol_version", 3)),
+        agg_tag=_require_bool(remote_data, "agg_tag", default=True),
+        payload_max=int(remote_data.get("payload_max", 1200)),
+        df=_require_bool(remote_data, "df", default=True),
+        plpmtud=_require_bool(remote_data, "plpmtud", default=False),
+        initial_request_retries=int(remote_data.get("initial_request_retries", 1)),
+        max_nack_rounds=int(remote_data.get("max_nack_rounds", 2)),
+        first_seq_timeout=float(remote_data.get("first_seq_timeout", 0.5)),
+        sock_timeout=float(remote_data.get("sock_timeout", 1.0)),
+        use_rust_client=_require_bool(remote_data, "use_rust_client", default=True),
     )
 
     filter_data = data.get("content_filter", {})

@@ -1,128 +1,316 @@
-# AKARI Proxy プロトコル仕様 v2（v1互換付き）
+# AKARI Proxy プロトコル仕様 v3
 
-本文は v2 を正とし、v1 は巻末の互換節に縮約する。
+本文は v3 を正とする。v3 は効率性と柔軟性の大幅な改善を目的として設計された。
 
 ---
 
 ## 1. システム概要
-ブラウザ → ローカルWebプロキシ → (UDP AKARI-UDP v2) → リモートプロキシ → HTTP(S) オリジン。  
-全リソースは Service Worker で `http://<local_proxy>/https://...` に強制迂回。ネット経路は圧縮を保持し、ローカルで解凍・書き換え。
+
+```
+ブラウザ/WebView → ローカルHTTPプロキシ → (UDP AKARI-UDP v3) → リモートプロキシ → HTTP(S) オリジン
+```
+
+- 全リソースは `http://<local_proxy>/<元URL>` に書き換え
+- ローカルでBrotli/gzip解凍、HTML/CSS/JS のURL書き換えを適用
+- Flutter/Windows/Android/iOS に対応したクロスプラットフォーム設計
 
 ---
 
 ## 2. トランスポート
-- UDP, MTU 1200B 前提（断片化回避）。  
-- 1パケット = 24B固定ヘッダ + Payload + HMAC/AEADタグ16B。  
-- タイムスタンプは秒精度（u32）。
+
+| 項目 | 値 |
+|------|-----|
+| プロトコル | UDP |
+| MTU | 1200B（断片化回避） |
+| パケット構成 | ヘッダ(12-18B) + Payload + HMAC/AEADタグ(16B)※ |
+| タグ省略 | AGG_TAGモード時、最終パケットのみタグ付与 |
+
+※暗号化モードまたは通常モードでは各パケットに16Bのタグ付与
 
 ---
 
-## 3. メッセージ種別
-| type | 意味 |
-| --- | --- |
-| 0 | req |
-| 1 | resp |
-| 2 | ack (first-lost) |
-| 3 | nack (bitmap) |
-| 4 | error |
+## 3. メッセージ種別 (PacketType)
+
+v3 ではレスポンスをヘッダとボディに分離し、再送を細粒度化。
+
+| type | 名前 | 用途 |
+|------|------|------|
+| 0 | Req | HTTPリクエスト |
+| 1 | RespHead | レスポンスヘッダ先頭（status, body_len, ヘッダブロック） |
+| 2 | RespHeadCont | ヘッダ継続チャンク（大きなヘッダ用） |
+| 3 | RespBody | レスポンスボディチャンク |
+| 4 | NackHead | ヘッダパケット再送要求（ビットマップ） |
+| 5 | NackBody | ボディパケット再送要求（ビットマップ） |
+| 6 | Error | エラー通知 |
 
 ---
 
-## 4. 共通ヘッダ（24B, BE）
+## 4. 共通ヘッダ (可変長, BE)
+
+v3 ヘッダは効率のため動的サイズ。SHORT_ID フラグで message_id を 8B → 2B に削減可能。
+
+### 4.1 基本構造
+
 ```
-0                7 8               15 16              23
-+----------------+-----------------+------------------+
-| 'A''K' |ver|type|flags|rsv| message_id (8B)        |
-+----------------+-----------------+------------------+
-| message_id cont.| seq (u16) | seq_total (u16)      |
-+-----------------------------------------------------+
-| payload_len(u16)| timestamp(u32)                    |
-+-----------------+-----------------------------------+
+ 0     1     2     3     4     5     6     7    ...
++-----+-----+-----+-----+-----+-----+-----+-----+
+|  'A'   'K' | ver | type| flags| rsv | message_id (2B or 8B)
++-----+-----+-----+-----+-----+-----+-----------+
+| seq (2B) | seq_total (2B) | payload_len (2B)  |
++----------+-----------+-----------------------+
 ```
-- ver: 0x02 (v2) / 0x01 (v1)
-- flags(v2): `E`暗号, `H`ヘッダ圧縮ブロック, `C`本文圧縮, `F`終端
-- tag: AEADタグ16B（E=1）または HMAC-SHA256 先頭16B（E=0）
+
+### 4.2 フィールド詳細
+
+| フィールド | サイズ | 説明 |
+|-----------|--------|------|
+| Magic | 2B | `"AK"` 固定 |
+| ver | 1B | `0x03` (v3) |
+| type | 1B | PacketType (0-6) |
+| flags | 1B | 動作制御フラグ |
+| reserved | 1B | 将来用 |
+| message_id | 2B or 8B | SHORT_ID=1 で 2B |
+| seq | 2B | パケット番号（Req時はtimestamp下位16bit転用） |
+| seq_total | 2B | 総パケット数（RespHead時はbodyのseq_total） |
+| payload_len | 2B | ペイロード長 |
+
+### 4.3 フラグ定義
+
+| bit | 名前 | 説明 |
+|-----|------|------|
+| 0x80 | E (ENCRYPT) | AEADモード有効 |
+| 0x40 | A (AGG_TAG) | 集約タグモード（最終パケットのみタグ） |
+| 0x20 | S (SHORT_ID) | message_id 16bit モード |
+| 0x10 | L (SHORT_LEN) | body_len/hdr_len 24bit モード |
 
 ---
 
-## 5. Payload 定義（v2）
+## 5. Payload 定義
+
 ### 5.1 Request (type=0)
-| ofs | size | field |
-| --- | --- | --- |
-|0|1|method (0=GET,1=HEAD,2=POST小)|
-|1-2|2|url_len|
-|3-4|2|opt_hdr_len|
-|5-|url_bytes UTF-8|
-|…|opt_headers (静的ID圧縮ブロック)|
 
-### 5.2 Response (type=1)
-- seq=0: `status(2) | hdr_block_len(2) | body_len(4) | hdr_block | body_chunk0`
-- seq>=1: `body_chunk`
-- `F=1` または `body_len` 到達で完了。
-
-### 5.3 ACK (type=2)
-`first_lost_seq(u16)` （全受信なら 0xFFFF）
-
-### 5.4 NACK (type=3)
-`bitmap_len(1) | bitmap...`（seq0基準 bit=1 が欠落）
-
-### 5.5 Error (type=4)
-`error_code(1) | http_status(2) | msg_len(2) | msg`
-
----
-
-## 6. HTTPヘッダ圧縮（H=1）
-静的名テーブル (1B ID):
-`1:content-type, 2:content-length, 3:cache-control, 4:etag, 5:last-modified, 6:date, 7:server, 8:content-encoding, 9:accept-ranges, 10:set-cookie, 11:location`  
-エンコード:
 ```
-ID!=0: [id][val_len(varint16)][value]
-ID==0: 0 [name_len(1)][name][val_len(varint16)][value]
++--------+----------+----------+------------------+----------------+
+| method | url_len  | hdr_len  | url (UTF-8)      | header_block   |
+| (1B)   | (2B)     | (2B)     | (url_len bytes)  | (hdr_len bytes)|
++--------+----------+----------+------------------+----------------+
 ```
-ブラウザ返送時に展開、Content-Encodingはローカルで解凍後に除去する。
+
+- method: 0=GET, 1=HEAD, 2=POST
+- seq/seq_total: timestamp の上位/下位16bit を転用
+
+### 5.2 RespHead (type=1)
+
+```
++-------------+-----------+----------+----------+----------------+
+| status_code | body_len  |hdr_chunks| hdr_idx  | header_block   |
+| (2B)        | (3B/4B)   | (1B)     | (1B)     | (可変)         |
++-------------+-----------+----------+----------+----------------+
+```
+
+- body_len: SHORT_LEN=1 で 3B (24bit)、=0 で 4B
+- hdr_chunks: ヘッダ分割総数
+- hdr_idx: このパケットのヘッダインデックス (0始まり)
+- seq_total: ボディ側の総パケット数
+
+### 5.3 RespHeadCont (type=2)
+
+```
++----------+----------+----------------+
+|hdr_chunks| hdr_idx  | header_block   |
+| (1B)     | (1B)     | (可変)         |
++----------+----------+----------------+
+```
+
+大きなレスポンスヘッダの継続チャンク。
+
+### 5.4 RespBody (type=3)
+
+```
++--------------------+---------------+
+| body_chunk         | [agg_tag]     |
+| (payload_len bytes)| (16B, 最終のみ)|
++--------------------+---------------+
+```
+
+- AGG_TAG モードで最終パケット (seq == seq_total-1) のみ agg_tag を付与
+- agg_tag なしの中間パケットはタグ検証をスキップ（受信完了後に一括検証）
+
+### 5.5 NackHead / NackBody (type=4, 5)
+
+```
++------------+---------------+
+| bitmap_len | bitmap        |
+| (1B)       | (bitmap_len B)|
++------------+---------------+
+```
+
+- bitmap: seq/hdr_idx 基準で bit=1 が欠落を示す
+
+### 5.6 Error (type=6)
+
+```
++------------+-------------+---------------------+
+| error_code | http_status | message (UTF-8)     |
+| (1B)       | (2B)        | (残り全部)          |
++------------+-------------+---------------------+
+```
 
 ---
 
-## 7. 圧縮/暗号
-- C=1: 本文のみ zstd Lv1（既定オフ、Brotli二重圧縮を避けるため環境で選択）。  
-- E=1: XChaCha20-Poly1305 (nonce = message_id(8)+seq(2)+flags下位2bit), 256bit PSK。
+## 6. HTTPヘッダ圧縮
+
+ヘッダブロックは静的テーブルによる名前ID圧縮を使用。
+
+### 6.1 静的名テーブル (1B ID)
+
+| ID | ヘッダ名 |
+|----|----------|
+| 1 | content-type |
+| 2 | content-length |
+| 3 | cache-control |
+| 4 | etag |
+| 5 | last-modified |
+| 6 | date |
+| 7 | server |
+| 8 | content-encoding |
+| 9 | accept-ranges |
+| 10 | set-cookie |
+| 11 | location |
+
+### 6.2 エンコード形式
+
+```
+既知ヘッダ (ID != 0):  [id:1B][val_len:varint16][value]
+未知ヘッダ (ID == 0):  [0:1B][name_len:1B][name][val_len:varint16][value]
+```
 
 ---
 
-## 8. 輻輳と再送
-- 送信ウィンドウ 4–8pkt。RTT×2 未ACKで再送、連続LOSSで半減(>=1)。  
-- first-lost ACK で最初の欠落を通知／NACK でビットマップ通知。  
-- 204/304/HEAD は seq=0 のみ + F=1 で終了。
+## 7. 暗号化 / 認証
+
+### 7.1 AEAD モード (E=1)
+
+- アルゴリズム: XChaCha20-Poly1305
+- 鍵: 256bit PSK (非32Bの場合 SHA-256 でハッシュ)
+- Nonce 構成: `message_id(8B) | seq(2B) | flags[1:0](1B) | 0-padding(13B)`
+- AAD: ヘッダ全体
+
+### 7.2 HMAC モード (E=0, AGG_TAG=0)
+
+- HMAC-SHA256 先頭16B
+- 対象: ヘッダ + ペイロード
+
+### 7.3 Aggregate Tag モード (E=0, AGG_TAG=1)
+
+- ボディパケット: 中間パケットはタグなし
+- 最終パケットのみ集約タグを付与
+- オーバーヘッド削減: (パケット数-1) × 16B 節約
 
 ---
 
-## 9. ブラウザ統合
-- Service Worker が全 fetch を `http://<listen_host>:<listen_port>/<元URL>` に書き換え、外部直アクセスを防止。  
-- レスポンスはローカルで Content-Encoding を解凍し、CSP/TE を除去後、HTML内の絶対URLをプロキシ経由に再書き換え。
+## 8. 信頼性と輻輳制御
+
+- 送信ウィンドウ: 4〜8パケット
+- 再送トリガ: RTT×2 経過で未ACK
+- NACK ベース: ビットマップで欠落を通知
+- ヘッダ/ボディ独立再送: NackHead / NackBody で細粒度制御
+- 204/304/HEAD: ボディなし、RespHead のみで完了
 
 ---
 
-## 10. v1 互換（簡約）
-- ver=0x01, type: req/resp/error のみ。ACK/NACKなし。  
-- req payload: method=0 GET 固定, `url_len`/`reserved`/`url`。  
-- resp seq=0: `status(2)|reserved(2)|body_len(4)|chunk0`、seq>=1: chunk。  
-- ヘッダ圧縮・フラグなし。  
-- 同ポート運用時は magic+ver 判定で振り分け、HMAC失敗で破棄。
+## 9. ブラウザ/WebView 統合
+
+### 9.1 URL 書き換え
+
+- 全 URL を `http://<listen_host>:<listen_port>/<元URL>` に書き換え
+- HTML: `href`, `src`, `action`, `poster` 等の属性
+- CSS: `url()` 関数内
+- JavaScript: `fetch`, `XMLHttpRequest` をインターセプト
+
+### 9.2 レスポンス処理
+
+- Content-Encoding (br/gzip) を解凍
+- CSP, X-Frame-Options 等のセキュリティヘッダを除去
+- Content-Type に応じたフィルタリング（JS/CSS/画像/その他）
+
+### 9.3 Service Worker
+
+JavaScript 環境での完全な fetch インターセプトを提供。
 
 ---
 
-## 11. 実装ステータス
-- Rust core: v2 ヘッダ/ACK/NACK/ヘッダ圧縮/HMAC 実装済。AEAD/圧縮フラグは未配線。  
-- Python binding: v1/v2 エンコード・デコード API 追加済。  
-- Web proxy: SW 強制ルーティング・圧縮解凍・CSP除去・Content-Type ベースのフィルタ適用。  
-- Remote proxy: v2 resp 送信（ヘッダブロック搭載）、Brotli圧縮を保持。
+## 10. 実装ステータス
+
+### 10.1 Rust Core (`akari_udp_core`)
+
+| 機能 | 状態 |
+|------|------|
+| v3 ヘッダ encode/decode | ✅ 完了 |
+| 全 PacketType 対応 | ✅ 完了 |
+| AGG_TAG モード | ✅ 完了 |
+| SHORT_ID / SHORT_LEN | ✅ 完了 |
+| XChaCha20-Poly1305 AEAD | ✅ 完了 |
+| HMAC 認証 | ✅ 完了 |
+| AkariClient (高レベル API) | ✅ 完了 |
+
+### 10.2 Flutter アプリ (`akari_flutter`)
+
+| 機能 | 状態 |
+|------|------|
+| Rust FFI バインディング | ✅ 完了 |
+| ローカル HTTP プロキシ | ✅ 完了 |
+| WebView 統合 | ✅ 完了 |
+| URL バー / ナビゲーション | ✅ 完了 |
+| 設定 UI (暗号化/PSK/フィルタ) | ✅ 完了 |
+| Windows ビルド | ✅ 完了 |
+| Android / iOS | 🔄 準備中 |
+
+### 10.3 Python プロキシ
+
+| 機能 | 状態 |
+|------|------|
+| リモートプロキシ (v3) | ✅ 完了 |
+| ローカルプロキシ (v3) | ✅ 完了 |
+| Brotli 保持転送 | ✅ 完了 |
 
 ---
 
-## 12. 今後のTODO
-- AEAD (E) の実配線と鍵更新フレーム。  
-- C フラグの実用条件（非Brotli時のみ）を自動判定。  
-- CSS 内 url() / JS 動的生成までの書き換え強化。  
-- テスト: MTU境界、ロス10–20%、Brotli + filter ON/OFF、v1/v2混在。
+## 11. v2 からの主な変更点
 
-- `conf/remote.toml` の `require_encryption = true` で E フラグ無しリクエストを拒否できる。UI トグルから E を送信可能。
+| v2 | v3 |
+|----|----|
+| 固定24Bヘッダ | 可変長ヘッダ (12-18B) |
+| resp/ack/nack 統合 | RespHead/RespBody/NackHead/NackBody 分離 |
+| 全パケットタグ必須 | AGG_TAG で最終パケットのみ |
+| message_id 8B 固定 | SHORT_ID で 2B 可能 |
+| body_len 4B 固定 | SHORT_LEN で 3B 可能 |
+
+---
+
+## 12. 設定オプション
+
+### 12.1 リモートプロキシ
+
+```toml
+# conf/remote.toml
+[security]
+require_encryption = true  # E=0 リクエストを拒否
+allowed_psks = ["..."]     # 許可する PSK リスト
+```
+
+### 12.2 Flutter アプリ UI
+
+- **暗号化トグル**: E フラグの有効/無効
+- **PSK 入力**: 共有秘密鍵の設定
+- **コンテンツフィルタ**: JS/CSS/画像/その他のオン/オフ
+
+---
+
+## 13. 今後の TODO
+
+- [ ] Android/iOS ビルドの完成
+- [ ] CSS 内 `url()` の完全対応
+- [ ] JS 動的生成 URL の書き換え強化
+- [ ] ロス率 10-20% 環境でのテスト
+- [ ] PSK ローテーション機能

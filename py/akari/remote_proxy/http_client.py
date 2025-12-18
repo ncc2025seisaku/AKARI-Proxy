@@ -18,8 +18,33 @@ DEFAULT_TIMEOUT = 10.0
 # 実験用に上限を拡大（1GB）
 MAX_BODY_BYTES = 1_000_000_000
 USER_AGENT = "AKARI-Proxy/0.1"
-# Prefer Brotli for効率, fallback to gzip/deflate.
+# Prefer Brotli for better compression efficiency, fallback to gzip/deflate.
 ACCEPT_ENCODING = "br, gzip, deflate"
+
+# セキュリティ関連ヘッダのブラックリスト（プロキシ動作を妨げるヘッダを除去）
+HEADERS_BLACKLIST = {
+    # iframe埋め込み制限
+    "x-frame-options",
+    # コンテンツセキュリティポリシー
+    "content-security-policy",
+    "content-security-policy-report-only",
+    # HTTPS強制（プロキシがHTTPで動作する場合に問題）
+    "strict-transport-security",
+    # クロスオリジン制限
+    "cross-origin-opener-policy",
+    "cross-origin-embedder-policy",
+    "cross-origin-resource-policy",
+    # その他のセキュリティヘッダ
+    "x-xss-protection",
+    "x-content-type-options",
+    "permissions-policy",
+    "feature-policy",  # 旧名
+}
+
+
+def _strip_security_headers(headers: dict[str, str]) -> dict[str, str]:
+    """ブラックリストに含まれるセキュリティヘッダを除去する。"""
+    return {k: v for k, v in headers.items() if k.lower() not in HEADERS_BLACKLIST}
 
 
 class HttpResponse(TypedDict):
@@ -83,17 +108,29 @@ def fetch(
     """
 
     normalized_url = _normalize_url(url)
+    parsed = parse.urlparse(normalized_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
     req = request.Request(
         normalized_url,
         method="GET",
         headers={
             "User-Agent": USER_AGENT,
             "Accept-Encoding": ACCEPT_ENCODING,
+            "Referer": origin + "/",
+            "Origin": origin,
         },
     )
 
+    import os
+    import ssl
+    context = None
+    if os.environ.get("AKARI_INSECURE_FETCH"):
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        with request.urlopen(req, timeout=timeout, context=context) as resp:
             body = resp.read(max_bytes + 1)
             if len(body) > max_bytes:
                 raise BodyTooLargeError(max_bytes)
@@ -101,7 +138,7 @@ def fetch(
             headers = {key: value for key, value in resp.getheaders()}
             return {
                 "status_code": resp.getcode(),
-                "headers": headers,
+                "headers": _strip_security_headers(headers),
                 "body": body,
             }
     except error.HTTPError as exc:
@@ -130,6 +167,8 @@ async def fetch_async(
         raise RuntimeError("aiohttp がインストールされていません") from exc
 
     normalized_url = _normalize_url(url)
+    parsed = parse.urlparse(normalized_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
     timeout_cfg = aiohttp.ClientTimeout(total=timeout, sock_read=timeout, sock_connect=timeout)
 
     async def _do(session_obj: "aiohttp.ClientSession") -> HttpResponse:
@@ -139,6 +178,8 @@ async def fetch_async(
                 headers={
                     "User-Agent": USER_AGENT,
                     "Accept-Encoding": ACCEPT_ENCODING,
+                    "Referer": origin + "/",
+                    "Origin": origin,
                 },
                 allow_redirects=True,
                 compress=False,  # 明示的に圧縮解除をさせない（raw転送）
@@ -152,7 +193,7 @@ async def fetch_async(
                 headers = {k: v for k, v in resp.headers.items()}
                 return {
                     "status_code": resp.status,
-                    "headers": headers,
+                    "headers": _strip_security_headers(headers),
                     "body": body,
                 }
         except asyncio.TimeoutError as exc:

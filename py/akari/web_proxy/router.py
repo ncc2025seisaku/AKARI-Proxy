@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urljoin, urlencode, urlunsplit
 
-from akari.udp_client import AkariUdpClient, ResponseOutcome
+from akari.udp_client import AkariUdpClient, ResponseOutcome, RustBackedAkariUdpClient
 from .config import WebProxyConfig
 from local_proxy.content_filter import ContentCategory, ContentFilter, FilterDecision
 
@@ -198,14 +198,39 @@ class WebRouter:
 
         return self._raw_response(target_url, outcome, skip_filter=skip_filter, use_encryption=use_encryption)
 
-    def _new_udp_client(self, *, use_encryption: bool) -> AkariUdpClient:
+    def _new_udp_client(self, *, use_encryption: bool) -> AkariUdpClient | RustBackedAkariUdpClient:
         remote = self._config.remote
-        return AkariUdpClient(
-            (remote.host, remote.port),
-            remote.psk,
-            timeout=remote.timeout,
-            use_encryption=use_encryption,
-        )
+        if remote.use_rust_client:
+            # Use Rust-backed client (v3 only)
+            return RustBackedAkariUdpClient(
+                (remote.host, remote.port),
+                remote.psk,
+                timeout=remote.timeout,
+                max_nack_rounds=remote.max_nack_rounds,
+                initial_request_retries=remote.initial_request_retries,
+                sock_timeout=remote.sock_timeout,
+                first_seq_timeout=remote.first_seq_timeout,
+                df=remote.df,
+                agg_tag=remote.agg_tag,
+                payload_max=remote.payload_max,
+            )
+        else:
+            # Fall back to Python client
+            return AkariUdpClient(
+                (remote.host, remote.port),
+                remote.psk,
+                timeout=remote.timeout,
+                protocol_version=remote.protocol_version,
+                use_encryption=use_encryption,
+                df=remote.df,
+                max_nack_rounds=remote.max_nack_rounds,
+                initial_request_retries=remote.initial_request_retries,
+                first_seq_timeout=remote.first_seq_timeout,
+                sock_timeout=remote.sock_timeout,
+                agg_tag=remote.agg_tag,
+                payload_max=remote.payload_max,
+                plpmtud=remote.plpmtud,
+            )
 
     # ------------------------------- response shaping -------------------------------
     def _raw_response(
@@ -363,6 +388,37 @@ class WebRouter:
             "document.addEventListener('click',onClick,true);"
             "document.addEventListener('submit',onSubmit,true);"
             "new MutationObserver(ms=>{ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.nodeType===1)scan(n);}));}).observe(document.documentElement,{childList:true,subtree:true});"
+            "function normalize(u){if(!u)return'';if(/^[a-zA-Z][a-zA-Z0-9+.-]*:\\/\\//.test(u))return u;if(u.startsWith('//'))return'https:'+u;if(u.includes('.'))return'https://'+u;return u;}"
+            "function installUrlPanel(){"
+            "if(!document.body||document.getElementById('akari-url-panel'))return;"
+            "const style=document.createElement('style');"
+            "style.id='akari-url-panel-style';"
+            "style.textContent="
+            "'#akari-url-panel{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:10px;padding:8px 10px;"
+            "background:rgba(6,8,15,0.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);"
+            "border:1px solid rgba(255,255,255,0.18);border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,0.45);"
+            "width:min(760px,calc(100vw - 28px));font-family:\"Inter\",\"SF Pro Display\",\"Yu Gothic\",system-ui,sans-serif;color:#f6f2ea;}"
+            "#akari-url-panel .akari-chip{font-size:12px;letter-spacing:0.18em;color:rgba(246,242,234,0.78);}"
+            "#akari-url-panel input{flex:1;min-width:0;border:1px solid rgba(255,255,255,0.18);border-radius:10px;background:rgba(255,255,255,0.06);"
+            "color:#f6f2ea;padding:8px 10px;font-size:14px;}"
+            "#akari-url-panel input:focus{outline:none;border-color:rgba(243,196,92,0.9);box-shadow:0 0 0 2px rgba(243,196,92,0.25);background:rgba(0,0,0,0.35);}"
+            "#akari-url-panel button{border:none;border-radius:10px;background:linear-gradient(135deg,#ffd889,#bf8d29);color:#08060a;font-weight:700;padding:8px 14px;cursor:pointer;box-shadow:0 10px 22px rgba(223,140,41,0.35);}"
+            "#akari-url-panel button:active{transform:translateY(1px);}"
+            "@media(max-width:540px){#akari-url-panel{flex-direction:column;align-items:stretch;top:10px;width:min(520px,calc(100vw - 16px));}#akari-url-panel button{width:100%;}}';"
+            "(document.head||document.documentElement).appendChild(style);"
+            "const form=document.createElement('form');"
+            "form.id='akari-url-panel';"
+            "form.setAttribute('role','navigation');"
+            "form.innerHTML=\"<span class='akari-chip'>AKARI</span><input id='akari-url-input' type='text' spellcheck='false' autocomplete='off' /><button type='submit' id='akari-url-go'>GO</button>\";"
+            "document.body.appendChild(form);"
+            "const input=form.querySelector('#akari-url-input');"
+            "const btn=form.querySelector('#akari-url-go');"
+            "if(input){input.value=base||location.href;}"
+            "function navigate(evt){if(evt)evt.preventDefault();if(!input)return;const raw=(input.value||'').trim();if(!raw){input.focus();return;}const normalized=normalize(raw);const prox=toProxy(normalized);if(prox){location.assign(prox);return;}try{const abs=new URL(normalized,base||undefined).href;let p=proxy+encodeURIComponent(abs);if(enc&&p.indexOf('?')===-1)p+='?enc=1';location.assign(p);}catch(e){alert('URL形式が正しくありません');}}"
+            "form.addEventListener('submit',navigate);"
+            "btn&&btn.addEventListener('click',navigate);"
+            "}"
+            "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',installUrlPanel);}else{installUrlPanel();}"
             "})();</script>"
         )
         text += registration_snippet + runtime_rewrite_snippet

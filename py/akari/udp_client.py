@@ -10,12 +10,17 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence, Tuple
 
 from akari_udp_py import (
-    decode_packet_py,
+    decode_packet_auto_py,
     encode_ack_v2_py,
     encode_nack_v2_py,
+    encode_nack_body_v3_py,
+    encode_nack_head_v3_py,
     encode_request_py,
     encode_request_v2_py,
+    encode_request_v3_py,
 )
+import hmac
+import hashlib
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,22 +36,24 @@ def _to_native(value: Any) -> Any:
 @dataclass
 class ResponseAccumulator:
     message_id: int
-    chunks: dict[int, bytes] = field(default_factory=dict)
-    seq_total: int | None = None
+    chunks: dict[int, bytes] = field(default_factory=dict)  # body chunks
+    seq_total: int | None = None  # body seq_total
     status_code: int | None = None
     body_len: int | None = None
     headers_bytes: bytes | None = None
     headers: dict[str, str] | None = None
+    # v3 header chunks
+    hdr_chunks: dict[int, bytes] = field(default_factory=dict)
+    hdr_total: int | None = None
+    agg_tag: bytes | None = None
 
-    def add_chunk(self, packet: Mapping[str, Any]) -> None:
+    def add_chunk_v2(self, packet: Mapping[str, Any]) -> None:
         header = packet["header"]
         if header["message_id"] != self.message_id:
             return
-
         payload = packet["payload"]
         seq: int = payload["seq"]
         self.chunks[seq] = payload["chunk"]
-
         seq_total = payload.get("seq_total")
         if seq_total is not None:
             self.seq_total = seq_total
@@ -58,6 +65,43 @@ class ResponseAccumulator:
         if hdr_bytes and self.headers_bytes is None:
             self.headers_bytes = bytes(hdr_bytes)
             self.headers = decode_header_block(self.headers_bytes)
+
+    def add_head_v3(self, payload: Mapping[str, Any]) -> None:
+        self.status_code = payload["status_code"]
+        self.body_len = payload["body_len"]
+        self.seq_total = payload["seq_total_body"]
+        hdr_idx = payload["hdr_idx"]
+        hdr_chunks = payload["hdr_chunks"]
+        self.hdr_total = hdr_chunks
+        self.hdr_chunks[hdr_idx] = bytes(payload["headers"])
+
+    def add_head_cont_v3(self, payload: Mapping[str, Any]) -> None:
+        hdr_idx = payload["hdr_idx"]
+        hdr_chunks = payload["hdr_chunks"]
+        self.hdr_total = hdr_chunks
+        self.hdr_chunks[hdr_idx] = bytes(payload["headers"])
+
+    def add_body_v3(self, header: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
+        seq = payload["seq"]
+        self.chunks[seq] = payload["chunk"]
+        seq_total = payload.get("seq_total") or header.get("seq_total")
+        if seq_total is not None:
+            self.seq_total = seq_total
+        if payload.get("agg_tag") is not None:
+            self.agg_tag = bytes(payload["agg_tag"])
+
+    @property
+    def header_complete(self) -> bool:
+        if self.hdr_total is None:
+            return False
+        return len(self.hdr_chunks) >= self.hdr_total
+
+    def assemble_headers(self) -> None:
+        if self.headers_bytes is not None or not self.header_complete:
+            return
+        ordered = [self.hdr_chunks[idx] for idx in sorted(self.hdr_chunks)]
+        self.headers_bytes = b"".join(ordered)
+        self.headers = decode_header_block(self.headers_bytes)
 
     @property
     def complete(self) -> bool:
@@ -161,11 +205,17 @@ class AkariUdpClient:
         initial_request_retries: int = 1,
         sock_timeout: float = 1.0,
         first_seq_timeout: float = 0.5,
+        df: bool = True,
+        agg_tag: bool = True,
+        payload_max: int | None = None,
+        plpmtud: bool = False,
+        short_id: bool = False,
     ):
         self._remote_addr = remote_addr
         self._psk = psk
         # timeout=None のときは無限待ち
-        self._timeout = timeout
+        # 無指定なら10秒、0以下なら無制限
+        self._timeout = None if (timeout is not None and timeout <= 0) else (10.0 if timeout is None else timeout)
         self._buffer_size = buffer_size
         self._max_nack_rounds = None if max_nack_rounds is None else max(0, int(max_nack_rounds))
         self._max_ack_rounds = max(0, int(max_ack_rounds))
@@ -177,16 +227,69 @@ class AkariUdpClient:
         self._first_seq_timeout = max(0.0, float(first_seq_timeout)) if first_seq_timeout is not None else None
         # 同一ソケットを複数スレッドで共有するとパケットを奪い合うため直列化用ロックを用意
         self._lock = threading.Lock()
+        self._df = bool(df)
+        self._agg_tag = bool(agg_tag)
+        self._payload_max = payload_max if payload_max and payload_max > 0 else None
+        self._plpmtud = bool(plpmtud)
+        self._short_id = bool(short_id)
+        self._dyn_payload_max: int | None = None
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self._sock_timeout)
         try:
             target_rcvbuf = max(int(rcvbuf_bytes), buffer_size)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, target_rcvbuf)
-            actual = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
-            LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
+            try:
+                self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, target_rcvbuf)
+                actual = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+                LOGGER.info("UDP SO_RCVBUF set to %s bytes", actual)
+            except AttributeError:
+                # テスト用 FakeSocket など setsockopt 未実装の場合は無視
+                LOGGER.debug("setsockopt not available on socket; skipping buffer tuning")
         except OSError:
             LOGGER.warning("could not set UDP SO_RCVBUF to %s", rcvbuf_bytes)
+        self._apply_df(self._sock)
+        self._dyn_payload_max = self._compute_payload_max()
+
+    def _apply_df(self, sock: socket.socket) -> None:
+        """DF（Don't Fragment）フラグを可能な範囲で適用する。失敗しても致命ではない。"""
+        if not self._df:
+            return
+        # Linux では IP_MTU_DISCOVER を DO に、Windows では IP_DONTFRAGMENT を使う
+        try:
+            if hasattr(socket, "IP_MTU_DISCOVER") and hasattr(socket, "IP_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MTU_DISCOVER, socket.IP_PMTUDISC_DO)
+            if hasattr(socket, "IPV6_MTU_DISCOVER") and hasattr(socket, "IPV6_PMTUDISC_DO"):
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU_DISCOVER, socket.IPV6_PMTUDISC_DO)
+        except OSError:
+            LOGGER.debug("could not enable DF/PMTUD on socket (IPv4/IPv6)")
+        try:
+            if hasattr(socket, "IP_DONTFRAGMENT"):
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_DONTFRAGMENT, 1)
+        except OSError:
+            LOGGER.debug("could not set IP_DONTFRAGMENT on socket")
+
+    def _compute_payload_max(self) -> int | None:
+        """PLPMTUDを考慮した payload_max を算出。取得できない場合は設定値をそのまま返す。"""
+        base = self._payload_max
+        if not self._plpmtud:
+            return base
+        mtu: int | None = None
+        try:
+            if hasattr(socket, "IP_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IP, socket.IP_MTU)
+            elif hasattr(socket, "IPV6_MTU"):
+                mtu = self._sock.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_MTU)
+        except OSError:
+            mtu = None
+        if mtu and mtu > 0:
+            estimated = max(256, mtu - 120)  # UDP/IP(48) + AKARI(40相当) + マージン(32)
+            return estimated if base is None else min(base, estimated)
+        return base
+
+    def _max_datagram_size(self) -> int:
+        """送信可能と見なす datagram の上限（MTU/設定/バッファの最小値）。"""
+        cap = self._dyn_payload_max if self._dyn_payload_max and self._dyn_payload_max > 0 else 1200
+        return min(self._buffer_size, cap)
 
     def send_request(
         self,
@@ -213,11 +316,22 @@ class AkariUdpClient:
         """Internal send; caller must hold _lock."""
 
         if datagram is None:
-            flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
-            if self._version >= 2:
+            flags = 0x80 if self._use_encryption else 0
+            if self._version >= 3:
+                if self._short_id:
+                    flags |= 0x20  # short-id
+                datagram = encode_request_v3_py("get", url, b"", message_id, flags, timestamp, self._psk)
+            elif self._version >= 2:
                 datagram = encode_request_v2_py("get", url, b"", message_id, timestamp, flags, self._psk)
             else:
                 datagram = encode_request_py(url, message_id, timestamp, self._psk)
+            max_dgram = self._max_datagram_size()
+            if len(datagram) > max_dgram:
+                LOGGER.warning(
+                    "request datagram len=%d exceeds max_dgram=%d (payload_max/PLPMTUD/rcvbuf); fragmentation risk",
+                    len(datagram),
+                    max_dgram,
+                )
 
         packets: list[Mapping[str, Any]] = []
         accumulator = ResponseAccumulator(message_id)
@@ -226,6 +340,7 @@ class AkariUdpClient:
         bytes_received = 0
         acks_sent = 0
         first_seq_deadline: float | None = None
+        agg_mode = False
 
         sock = self._sock
         sock.sendto(datagram, self._remote_addr)
@@ -238,60 +353,69 @@ class AkariUdpClient:
             except ConnectionResetError:
                 LOGGER.debug("recvfrom ConnectionResetError (ignored)")
                 continue
+                continue
             except socket.timeout:
-                # 先頭チャンク（seq_total 情報）がないまま一定時間経過したら破棄して再リクエスト
                 now = time.monotonic()
-                waiting_first = accumulator.seq_total is None and accumulator.chunks
-                allow_first_retry = self._first_seq_timeout is not None and req_retries_left > 0
-                if waiting_first and allow_first_retry:
-                    if first_seq_deadline is None:
-                        first_seq_deadline = now + self._first_seq_timeout
-                    if now >= first_seq_deadline:
-                        accumulator = ResponseAccumulator(message_id)
-                        first_seq_deadline = None
-                        nacks_sent = 0
+                elapsed = now - last_activity
+
+                # 初回無応答: リトライを優先
+                if not packets:
+                    if req_retries_left > 0:
                         sock.sendto(datagram, self._remote_addr)
                         bytes_sent += len(datagram)
                         req_retries_left -= 1
                         last_activity = now
-                        LOGGER.debug("retry request (missing seq0) message_id=%s (%d left)", message_id, req_retries_left)
+                        LOGGER.debug("retry request (no response yet) message_id=%s (%d left)", message_id, req_retries_left)
                         continue
+                    # リトライ尽きたらタイムアウト判定へ
 
-                # 何も受信できていない場合はリクエスト自体を限定回数で再送
-                if not packets and req_retries_left > 0:
-                    sock.sendto(datagram, self._remote_addr)
-                    bytes_sent += len(datagram)
-                    req_retries_left -= 1
-                    last_activity = time.monotonic()
-                    LOGGER.debug("retry request message_id=%s (%d left)", message_id, req_retries_left)
-                    continue
-
-                # 一定時間受信がなく、欠損がある場合のみNACKを送って再送を促す
-                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
-                if (
-                    self._version >= 2
-                    and allow_nack
-                    and accumulator.seq_total is not None
-                    and not accumulator.complete
-                ):
-                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
-                    if missing_seqs:
-                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
-                        nack = encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                # ヘッダ未完ならヘッダNACKを優先
+                if self._version >= 3 and accumulator.hdr_total and not accumulator.header_complete:
+                    missing_hdrs = [i for i in range(accumulator.hdr_total) if i not in accumulator.hdr_chunks]
+                    allow_nack_head = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                    if allow_nack_head and missing_hdrs:
+                        bitmap = self._build_missing_bitmap_from_list(missing_hdrs)
+                        nack = encode_nack_head_v3_py(bitmap, message_id, 0, self._psk)
                         sock.sendto(nack, self._remote_addr)
                         bytes_sent += len(nack)
                         nacks_sent += 1
-                        last_activity = time.monotonic()
+                        last_activity = now
                         LOGGER.debug(
-                            "send NACK message_id=%s missing=%s bitmap_len=%d nacks_sent=%d",
+                            "send NACK-HEAD message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (timeout)",
                             message_id,
-                            missing_seqs,
-                            len(missing_bitmap),
+                            missing_hdrs,
+                            len(bitmap),
                             nacks_sent,
                         )
                         continue
 
-                if self._timeout is not None and (time.monotonic() - last_activity) >= self._timeout:
+                # ヘッダ完了後はボディNACK
+                if accumulator.seq_total is not None and not accumulator.complete:
+                    allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                    if allow_nack:
+                        missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                        if missing_seqs:
+                            missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
+                            nack = (
+                                encode_nack_body_v3_py(missing_bitmap, message_id, 0, self._psk)
+                                if self._version >= 3
+                                else encode_nack_v2_py(missing_bitmap, message_id, timestamp, self._psk)
+                            )
+                            sock.sendto(nack, self._remote_addr)
+                            bytes_sent += len(nack)
+                            nacks_sent += 1
+                            last_activity = now
+                            LOGGER.debug(
+                                "send NACK-BODY message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (timeout)",
+                                message_id,
+                                missing_seqs,
+                                len(missing_bitmap),
+                                nacks_sent,
+                            )
+                            continue
+
+                # 最終的なタイムアウト判定
+                if self._timeout is not None and elapsed >= self._timeout:
                     return ResponseOutcome(
                         message_id=message_id,
                         packets=packets,
@@ -309,33 +433,44 @@ class AkariUdpClient:
                 continue
 
             bytes_received += len(data)
-            parsed = decode_packet_py(data, self._psk)
+            try:
+                from akari_udp_py import decode_packet_v3_py
+                parsed = decode_packet_v3_py(data, self._psk)
+            except Exception as e_v3:
+                # v3 decode failed, try auto/fallback but log the v3 error for debugging
+                LOGGER.debug("v3 decode failed: %s (len=%d)", e_v3, len(data))
+                try:
+                    parsed = decode_packet_auto_py(data, self._psk)
+                except Exception as e_auto:
+                    LOGGER.error("packet decode failed completely: %s (v3 error: %s)", e_auto, e_v3)
+                    raise e_auto
             native = _to_native(parsed)
             packets.append(native)
             last_activity = time.monotonic()
-            payload = parsed.get("payload", {})
+            payload = native.get("payload", {})
+            header_flags = native.get("header", {}).get("flags", 0)
+            if header_flags & 0x40 and self._version >= 3:
+                agg_mode = True
             chunk = payload.get("chunk")
             chunk_len = len(chunk) if isinstance(chunk, (bytes, bytearray)) else None
             LOGGER.info(
                 "recv packet type=%s message_id=%s seq=%s/%s chunk=%sB",
-                parsed.get("type"),
-                parsed.get("header", {}).get("message_id"),
+                native.get("type"),
+                native.get("header", {}).get("message_id"),
                 payload.get("seq"),
-                payload.get("seq_total"),
+                payload.get("seq_total") or native.get("header", {}).get("seq_total"),
                 chunk_len,
             )
 
-            packet_type = parsed["type"]
+            packet_type = native["type"]
             if packet_type == "resp":
-                accumulator.add_chunk(parsed)
+                accumulator.add_chunk_v2(native)
                 seq_total = accumulator.seq_total
                 seq = payload.get("seq")
 
-                # seq_total が取れたら先頭待ちタイマーを解除
                 if seq_total is not None:
                     first_seq_deadline = None
 
-                # 欠損があれば ACK を送って最初の欠損シーケンスを通知
                 if (
                     self._version >= 2
                     and self._max_ack_rounds > acks_sent
@@ -358,7 +493,6 @@ class AkariUdpClient:
                 if accumulator.complete:
                     break
 
-                # 欠損があり、かつ最後のチャンク（seq_total-1）を受信したタイミングでのみNACKを再送
                 allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
                 if (
                     self._version >= 2
@@ -382,11 +516,52 @@ class AkariUdpClient:
                             len(missing_bitmap),
                             nacks_sent,
                         )
+            elif packet_type == "resp-head":
+                accumulator.add_head_v3(payload)
+                if accumulator.header_complete:
+                    accumulator.assemble_headers()
+            elif packet_type == "resp-head-cont":
+                accumulator.add_head_cont_v3(payload)
+                if accumulator.header_complete:
+                    accumulator.assemble_headers()
+            elif packet_type == "resp-body":
+                accumulator.add_body_v3(native.get("header", {}), payload)
+                if accumulator.seq_total is not None and accumulator.complete:
+                    break
+                allow_nack = self._max_nack_rounds is None or nacks_sent < self._max_nack_rounds
+                seq_total = accumulator.seq_total
+                seq = payload.get("seq")
+                if allow_nack and seq_total is not None and seq is not None and seq_total > 0 and seq == seq_total - 1:
+                    missing_seqs = self._sanitize_missing(self._missing_seq_list(accumulator), accumulator)
+                    if missing_seqs:
+                        missing_bitmap = self._build_missing_bitmap_from_list(missing_seqs)
+                        nack = encode_nack_body_v3_py(missing_bitmap, message_id, 0, self._psk)
+                        sock.sendto(nack, self._remote_addr)
+                        bytes_sent += len(nack)
+                        nacks_sent += 1
+                        LOGGER.debug(
+                            "send NACK-BODY message_id=%s missing=%s bitmap_len=%d nacks_sent=%d (after tail chunk)",
+                            message_id,
+                            missing_seqs,
+                            len(missing_bitmap),
+                            nacks_sent,
+                        )
+            elif packet_type == "nack-head":
+                # ignore on client side (not expected)
+                pass
             elif packet_type == "error":
-                error_payload = parsed["payload"]
+                error_payload = native["payload"]
                 break
 
         body = accumulator.assembled_body() if accumulator.complete else None
+        # 集約タグ検証（非暗号化のみ想定）
+        if agg_mode and accumulator.complete and body is not None:
+            if accumulator.agg_tag is None:
+                error_payload = {"message": "aggregate tag missing"}
+            else:
+                calc_tag = hmac.new(self._psk, body, hashlib.sha256).digest()[:16]
+                if calc_tag != accumulator.agg_tag:
+                    error_payload = {"message": "aggregate tag mismatch"}
         return ResponseOutcome(
             message_id=message_id,
             packets=packets,
@@ -431,6 +606,12 @@ class AkariUdpClient:
             bitmap[idx] |= 1 << bit
         return bytes(bitmap)
 
+    # 互換用: 古いテストが参照するヘルパ
+    def _build_missing_bitmap(self, acc: ResponseAccumulator) -> bytes:  # pragma: no cover - compatibility
+        if acc.seq_total is None:
+            return b""
+        return self._build_missing_bitmap_from_list(self._missing_seq_list(acc))
+
     def _sanitize_missing(self, missing: list[int], acc: ResponseAccumulator) -> list[int]:
         # 念のため、受信済みが混ざっていたら除外しログに残す
         filtered = [seq for seq in missing if seq not in acc.chunks]
@@ -452,3 +633,141 @@ class AkariUdpClient:
             if seq not in acc.chunks:
                 return seq
         return None
+
+
+# ---------- Rust-backed client ----------
+
+class RustBackedAkariUdpClient:
+    """
+    AKARI-UDP v3 client using the Rust implementation.
+    
+    This client delegates all communication logic to the Rust `AkariClient`,
+    providing the same interface as `AkariUdpClient` but with Rust-native
+    retransmission, NACK handling, and timeout management.
+    """
+
+    def __init__(
+        self,
+        remote_addr: tuple[str, int],
+        psk: bytes,
+        *,
+        timeout: float | None = None,
+        max_nack_rounds: int | None = 3,
+        initial_request_retries: int = 1,
+        sock_timeout: float = 1.0,
+        first_seq_timeout: float = 0.5,
+        df: bool = True,
+        agg_tag: bool = True,
+        payload_max: int | None = None,
+        short_id: bool = False,
+        # Ignored legacy parameters for compatibility
+        buffer_size: int = 65535,
+        rcvbuf_bytes: int = 1_048_576,
+        protocol_version: int = 3,
+        max_ack_rounds: int = 0,
+        use_encryption: bool = False,
+        plpmtud: bool = False,
+    ):
+        from akari_udp_py import AkariClient, RequestConfig
+
+        self._remote_addr = remote_addr
+        self._psk = psk
+        self._timeout = timeout if timeout is not None else 10.0
+
+        # Create Rust client
+        host, port = remote_addr
+        self._rust_client = AkariClient(host, port, psk)
+
+        # Store config for each request
+        self._config = RequestConfig(
+            timeout_ms=int(self._timeout * 1000) if self._timeout > 0 else 0,
+            max_nack_rounds=max_nack_rounds,
+            initial_request_retries=initial_request_retries,
+            sock_timeout_ms=int(sock_timeout * 1000),
+            first_seq_timeout_ms=int(first_seq_timeout * 1000),
+            df=df,
+            agg_tag=agg_tag,
+            payload_max=payload_max,
+            short_id=short_id,
+        )
+
+        self._message_id = 0
+        self._lock = threading.Lock()
+
+    def send_request(
+        self,
+        url: str,
+        message_id: int,
+        timestamp: int,
+        *,
+        datagram: bytes | None = None,
+    ) -> ResponseOutcome:
+        """Send a request and wait for response. Compatible with AkariUdpClient interface."""
+        with self._lock:
+            try:
+                response = self._rust_client.send_request(
+                    url,
+                    method="GET",
+                    config=self._config,
+                )
+
+                # Convert Rust HttpResponse to ResponseOutcome
+                stats = response.stats
+                headers = dict(response.headers)
+
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],  # Not tracked in Rust version
+                    body=bytes(response.body),
+                    status_code=response.status_code,
+                    headers=headers,
+                    error=None,
+                    complete=True,
+                    timed_out=False,
+                    bytes_sent=stats.bytes_sent,
+                    bytes_received=stats.bytes_received,
+                    nacks_sent=stats.nacks_sent,
+                    request_retries=stats.request_retries,
+                )
+
+            except TimeoutError:
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],
+                    body=None,
+                    status_code=None,
+                    headers=None,
+                    error=None,
+                    complete=False,
+                    timed_out=True,
+                    bytes_sent=0,
+                    bytes_received=0,
+                    nacks_sent=0,
+                    request_retries=0,
+                )
+            except Exception as e:
+                LOGGER.error("Rust client error: %s", e)
+                return ResponseOutcome(
+                    message_id=message_id,
+                    packets=[],
+                    body=None,
+                    status_code=None,
+                    headers=None,
+                    error={"message": str(e)},
+                    complete=False,
+                    timed_out=False,
+                    bytes_sent=0,
+                    bytes_received=0,
+                    nacks_sent=0,
+                    request_retries=0,
+                )
+
+    def close(self) -> None:
+        """Close the client. No-op for Rust client (socket managed internally)."""
+        pass
+
+    def __enter__(self) -> "RustBackedAkariUdpClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

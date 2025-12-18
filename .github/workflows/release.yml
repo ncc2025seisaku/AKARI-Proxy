@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # Windows Build
+  windows:
+    uses: ./.github/workflows/windows-release.yml
+    secrets: inherit
+
+  # Android Build
+  android:
+    uses: ./.github/workflows/android-release.yml
+    secrets: inherit
+
+  # iOS Build
+  ios:
+    uses: ./.github/workflows/ios-release.yml
+    secrets: inherit
+
+  # Create unified GitHub Release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [windows, android, ios]
+    if: always() && needs.windows.result == 'success' && needs.android.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: artifacts/
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-release-apk
+          path: artifacts/
+
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ios-release-ipa
+          path: artifacts/
+
+      - name: Create Release Notes
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cat > release_notes.md << EOF
+          # AKARI Proxy v$VERSION
+
+          ## Downloads
+
+          | Platform | File |
+          |----------|------|
+          | Windows | akari-proxy-windows-$VERSION.zip |
+          | Android | akari-proxy-android-$VERSION.apk |
+          | iOS | akari-proxy-ios-$VERSION.ipa (if available) |
+
+          ## Installation
+
+          ### Windows
+          1. Download and extract the ZIP file
+          2. Run \`akari_flutter.exe\`
+
+          ### Android
+          1. Download the APK file
+          2. Enable "Install from unknown sources" in settings
+          3. Install the APK
+
+          ### iOS
+          - Available via TestFlight or enterprise distribution
+
+          ## Changelog
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: AKARI Proxy v${{ steps.version.outputs.VERSION }}
+          body_path: release_notes.md
+          files: artifacts/*
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

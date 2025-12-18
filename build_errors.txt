@@ -1,0 +1,83 @@
+   Compiling akari_udp_py v0.1.0 (C:\Users\szk27\OneDrive\繝・せ繧ｯ繝医ャ繝予AKARI-Proxy\crates\akari_udp_py)
+warning: unused variable: `e`
+   --> crates\akari_udp_core\src\client.rs:443:29
+    |
+443 |                         Err(e) => {
+    |                             ^ help: if this is intentional, prefix it with an underscore: `_e`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `elapsed`
+   --> crates\akari_udp_core\src\client.rs:509:25
+    |
+509 |                     let elapsed = last_activity.elapsed();
+    |                         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elapsed`
+
+warning: function `max_body_chunk_len` is never used
+   --> crates\akari_udp_core\src\encode_v3.rs:222:8
+    |
+222 | pub fn max_body_chunk_len(mtu: usize, header_len: usize) -> usize {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `message_id` is never read
+   --> crates\akari_udp_core\src\client.rs:121:5
+    |
+120 | struct ResponseAccumulator {
+    |        ------------------- field in this struct
+121 |     message_id: u64,
+    |     ^^^^^^^^^^
+
+warning: field `remote_addr` is never read
+   --> crates\akari_udp_core\src\client.rs:345:5
+    |
+344 | pub struct AkariClient {
+    |            ----------- field in this struct
+345 |     remote_addr: SocketAddr,
+    |     ^^^^^^^^^^^
+
+warning: `akari_udp_core` (lib) generated 5 warnings
+warning: non-local `impl` definition, `impl` blocks should be written at the same level as their item
+   --> crates\akari_udp_py\src\lib.rs:492:1
+    |
+492 | #[pymethods]
+    | -^^^^^^^^^^^
+    | |
+    | `PyClassImplCollector` is not local
+    | `PyClassNewTextSignature` is not local
+    | move the `impl` block outside of this function `trampoline` and up 4 bodies
+493 | impl RequestConfig {
+    |      -------------
+    |      |
+    |      `RequestConfig` is not local
+    |      `RequestConfig` is not local
+    |
+    = note: the attribute macro `pymethods` defines the non-local `impl`, and may need to be changed
+    = note: the attribute macro `pymethods` may come from an old version of the `pyo3_macros` crate, try updating your dependency with `cargo update -p pyo3_macros`
+    = note: an `impl` is never scoped, even when it is nested inside an item, as it may impact type checking outside of that item, which can be the case if neither the trait or the self type are at the same nesting level as the `impl`
+    = note: `#[warn(non_local_definitions)]` on by default
+    = note: this warning originates in the attribute macro `pymethods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: non-local `impl` definition, `impl` blocks should be written at the same level as their item
+   --> crates\akari_udp_py\src\lib.rs:642:1
+    |
+642 | #[pymethods]
+    | -^^^^^^^^^^^
+    | |
+    | `PyClassImplCollector` is not local
+    | `PyClassNewTextSignature` is not local
+    | move the `impl` block outside of this function `trampoline` and up 4 bodies
+643 | impl AkariClient {
+    |      -----------
+    |      |
+    |      `AkariClient` is not local
+    |      `AkariClient` is not local
+    |
+    = note: the attribute macro `pymethods` defines the non-local `impl`, and may need to be changed
+    = note: the attribute macro `pymethods` may come from an old version of the `pyo3_macros` crate, try updating your dependency with `cargo update -p pyo3_macros`
+    = note: an `impl` is never scoped, even when it is nested inside an item, as it may impact type checking outside of that item, which can be the case if neither the trait or the self type are at the same nesting level as the `impl`
+    = note: this warning originates in the attribute macro `pymethods` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `akari_udp_py` (lib) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 2.74s

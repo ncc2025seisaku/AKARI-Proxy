@@ -34,7 +34,13 @@ sys.path.insert(0, str(ROOT / "py"))
 from akari.remote_proxy.handler import ERROR_TIMEOUT  # noqa: E402
 from akari.udp_client import AkariUdpClient, ResponseAccumulator, ResponseOutcome  # noqa: E402
 from akari.udp_server import AkariUdpServer, IncomingRequest, encode_error_response, encode_success_response  # noqa: E402
-from akari_udp_py import decode_packet_py, encode_nack_v2_py, encode_request_py, encode_request_v2_py  # noqa: E402
+from akari_udp_py import (  # noqa: E402
+    decode_packet_py,
+    encode_nack_v2_py,
+    encode_request_py,
+    encode_request_v2_py,
+    encode_request_v3_py,
+)
 
 LOGGER = logging.getLogger("akari.loadtest")
 NACK_MIN_INTERVAL = 0.05  # seconds; avoid NACK連打
@@ -87,6 +93,22 @@ class LoadTestClient(AkariUdpClient):
         # 最初のレスポンスは欠損させずに通すためのガード
         self._skip_first_drop = True
 
+    class _LossySocketWrapper:
+        """wrap socket to inject loss/jitter/flap into recvfrom."""
+
+        def __init__(self, sock, dropper):
+            self._sock = sock
+            self._dropper = dropper
+
+        def recvfrom(self, bufsize):
+            return self._dropper(self._sock.recvfrom, bufsize)
+
+        def __getattr__(self, name):
+            return getattr(self._sock, name)
+
+        def fileno(self):
+            return self._sock.fileno()
+
     def send_request(  # type: ignore[override]
         self,
         url: str,
@@ -95,6 +117,27 @@ class LoadTestClient(AkariUdpClient):
         *,
         datagram: bytes | None = None,
     ) -> ResponseOutcome:
+        # v3 についても AkariUdpClient の実装を使うが、ここで loss/jitter/flap を挿入する
+        if self._version >= 3:
+            def dropper(recvfrom_fn, bufsize: int):
+                # フラップ区間ならタイムアウト扱い
+                if self._flap_interval and self._flap_duration:
+                    if (time.monotonic() - self._started_at) % self._flap_interval < self._flap_duration:
+                        raise socket.timeout()
+                data, addr = recvfrom_fn(bufsize)
+                if self._loss_rate and random.random() < self._loss_rate:
+                    raise socket.timeout()
+                if self._jitter:
+                    time.sleep(random.uniform(0, self._jitter))
+                return data, addr
+
+            original_sock = self._sock
+            self._sock = self._LossySocketWrapper(self._sock, dropper)
+            try:
+                return super().send_request(url, message_id, timestamp, datagram=datagram)
+            finally:
+                self._sock = original_sock
+
         if datagram is None:
             flags = 0x80 if (self._use_encryption and self._version >= 2) else 0
             if self._version >= 2:
@@ -557,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=14500, help="Remote proxy port")
     parser.add_argument("--psk", default="test-psk-0000-test", help="PSK (text or hex if --hex is set)")
     parser.add_argument("--hex", action="store_true", help="Interpret PSK as hexadecimal")
-    parser.add_argument("--protocol-version", type=int, default=2, choices=[1, 2], help="AKARI protocol version")
+    parser.add_argument("--protocol-version", type=int, default=3, choices=[1, 2, 3], help="AKARI protocol version")
     parser.add_argument("--url", action="append", dest="urls", help="Target URL (can specify multiple)")
     parser.add_argument("--url-file", help="Path to file that lists target URLs line by line")
     parser.add_argument("--requests", type=int, default=200, help="Total request count")
