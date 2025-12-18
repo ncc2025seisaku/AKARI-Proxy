@@ -173,26 +173,13 @@ jobs:
       - name: Build iOS app without code signing
         working-directory: akari_flutter
         run: |
-          # First, run flutter build to generate native code
-          flutter build ios --release --no-codesign --config-only
+          # Build the app with Flutter (this includes Rust compilation via cargokit)
+          flutter build ios --release --no-codesign
           
-          # Then use xcodebuild with explicit code signing disabled
-          cd ios
-          xcodebuild -workspace Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY='' \
-            DEVELOPMENT_TEAM='' \
-            PROVISIONING_PROFILE_SPECIFIER='' \
-            EXPANDED_CODE_SIGN_IDENTITY='' \
-            BUILD_DIR=../build/ios \
-            -archivePath ../build/ios/Runner.xcarchive \
-            archive
-
+          # The app is already built, now create an archive for distribution
+          # Since flutter build ios --no-codesign already built everything,
+          # we just need to package the .app into an archive format
+          
 
       - name: Create unsigned IPA
         run: |
