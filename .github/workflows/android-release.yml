@@ -55,8 +55,9 @@ jobs:
           echo "ndk.dir=$ANDROID_HOME/ndk/$NDK_VERSION" > akari_flutter/android/local.properties
           echo "sdk.dir=$ANDROID_HOME" >> akari_flutter/android/local.properties
           
-          # Set environment variable for cargo-ndk
+          # Set environment variables for cargo-ndk and Gradle
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
+          echo "ANDROID_NDK_VERSION=$NDK_VERSION" >> $GITHUB_ENV
 
       - name: Get Flutter dependencies
         working-directory: akari_flutter
