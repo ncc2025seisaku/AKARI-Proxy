@@ -126,16 +126,95 @@ jobs:
             security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
           fi
 
+  # Build unsigned IPA for sideloading (no certificates required)
+  build-unsigned:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, x86_64-apple-ios
+
+      - name: Install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen --version 2.11.1
+
+      - name: Get Flutter dependencies
+        working-directory: akari_flutter
+        run: flutter pub get
+
+      - name: Run code generation
+        working-directory: akari_flutter
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Install CocoaPods dependencies
+        working-directory: akari_flutter/ios
+        run: pod install
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v(.+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$VERSION" ]; then VERSION="0.0.0"; fi
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build iOS app without code signing
+        working-directory: akari_flutter
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: Create unsigned IPA
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          APP_PATH="akari_flutter/build/ios/iphoneos/Runner.app"
+          
+          # Create Payload directory structure
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          
+          # Create IPA (zip the Payload folder)
+          zip -r "akari-proxy-ios-${VERSION}-unsigned.ipa" Payload
+          
+          # Clean up
+          rm -rf Payload
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: akari-proxy-ios-*-unsigned.ipa
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: akari-proxy-ios-*-unsigned.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   skip-notice:
     needs: check-secrets
     if: needs.check-secrets.outputs.has-certificates != 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: iOS Build Skipped
+      - name: Signed iOS Build Skipped
         run: |
-          echo "⚠️ iOS build was skipped because Apple certificates are not configured."
+          echo "ℹ️ Signed iOS build was skipped because Apple certificates are not configured."
+          echo "✅ Unsigned IPA for sideloading is still being built."
           echo ""
-          echo "To enable iOS builds, add the following secrets to your repository:"
+          echo "To enable signed iOS builds, add the following secrets to your repository:"
           echo "  - APPLE_CERTIFICATE_BASE64"
           echo "  - APPLE_CERTIFICATE_PASSWORD"
           echo "  - APPLE_PROVISIONING_PROFILE_BASE64"
