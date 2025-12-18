@@ -38,6 +38,13 @@ jobs:
         working-directory: akari_flutter
         run: flutter_rust_bridge_codegen generate
 
+      - name: Setup Cargokit build tool
+        shell: pwsh
+        run: |
+          # Install cargokit build_tool dependencies
+          cd akari_flutter/rust_builder/cargokit/build_tool
+          dart pub get
+        
       - name: Extract version from tag
         id: version
         shell: pwsh
