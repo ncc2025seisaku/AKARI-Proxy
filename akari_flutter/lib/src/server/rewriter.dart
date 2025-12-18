@@ -7,7 +7,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:brotli/brotli.dart' as brotli;
+import 'package:brotli/brotli.dart';
 
 /// Proxy URL generator configuration.
 class ProxyRewriterConfig {
@@ -367,7 +367,7 @@ String rewriteLocationHeader(
       case 'deflate':
         decompressed = zlib.decode(body);
       case 'br':
-        decompressed = brotli.decode(Uint8List.fromList(body));
+        decompressed = brotli.decode(body);
       default:
         // Unknown encoding, return as-is
         return (body, false);

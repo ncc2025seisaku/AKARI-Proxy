@@ -8,6 +8,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
@@ -159,29 +161,41 @@ class LocalProxyServer {
 
   Future<Response> _serveStaticFile(String filename, String contentType) async {
     try {
-      // Get the directory where this script is located
-      final scriptDir = Platform.script.resolve('.').toFilePath();
-      // Navigate to lib/src/server/static from the build output
-      final staticDir = Directory('${scriptDir}data/flutter_assets/packages/akari_flutter/lib/src/server/static');
-      
-      // Fallback for development: use relative path from project root
-      Directory actualStaticDir;
-      if (await staticDir.exists()) {
-        actualStaticDir = staticDir;
+      List<int> body;
+
+      if (Platform.isWindows) {
+        // Windows behavior: try to load from local file system
+        // Get the directory where this script is located
+        final scriptDir = Platform.script.resolve('.').toFilePath();
+        // Navigate to lib/src/server/static from the build output
+        final staticDir = Directory('${scriptDir}data/flutter_assets/packages/akari_flutter/lib/src/server/static');
+        
+        File? file;
+        if (await staticDir.exists()) {
+          file = File('${staticDir.path}/$filename');
+        } else {
+          // Development mode - use lib directory directly
+          file = File('lib/src/server/static/$filename');
+        }
+
+        if (file != null && await file.exists()) {
+          body = await file.readAsBytes();
+        } else {
+          return Response.notFound('File not found: $filename');
+        }
       } else {
-        // Development mode - use lib directory directly
-        actualStaticDir = Directory('lib/src/server/static');
-        if (!await actualStaticDir.exists()) {
-          return Response.notFound('Static directory not found');
+        // Mobile behavior: load from Flutter assets
+        // The path in pubspec.yaml is 'lib/src/server/static/'
+        final assetPath = 'lib/src/server/static/$filename';
+        try {
+          final data = await rootBundle.load(assetPath);
+          body = data.buffer.asUint8List();
+        } catch (e) {
+          debugPrint('Asset not found: $assetPath ($e)');
+          return Response.notFound('Asset not found: $filename');
         }
       }
       
-      final file = File('${actualStaticDir.path}/$filename');
-      if (!await file.exists()) {
-        return Response.notFound('File not found: $filename');
-      }
-      
-      final body = await file.readAsBytes();
       return Response.ok(
         body,
         headers: {

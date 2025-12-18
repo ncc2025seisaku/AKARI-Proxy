@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:webview_windows/webview_windows.dart';
+import 'package:webview_windows/webview_windows.dart' as ww;
+import 'package:webview_flutter/webview_flutter.dart' as wf;
 import 'package:akari_flutter/src/rust/frb_generated.dart';
 import 'package:akari_flutter/src/server/local_server.dart';
 import 'package:akari_flutter/src/services/settings_service.dart';
@@ -68,7 +69,11 @@ class ProxyHomePage extends StatefulWidget {
 }
 
 class _ProxyHomePageState extends State<ProxyHomePage> {
-  final _webviewController = WebviewController();
+  // Windows WebView
+  final _windowsController = ww.WebviewController();
+  // Android/iOS WebView
+  late final wf.WebViewController _androidController;
+  
   final _urlController = TextEditingController();
   bool _isWebViewReady = false;
   String _currentUrl = '';
@@ -94,59 +99,108 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
 
   Future<void> _initWebView() async {
     try {
-      await _webviewController.initialize();
-      
-      _webviewController.url.listen((url) {
-        // Detect navigation away from localhost and redirect through proxy
-        if (!url.startsWith('http://127.0.0.1:8080/') && 
-            !url.startsWith('http://localhost:8080/') &&
-            url.startsWith('http')) {
-          debugPrint('Detected external navigation: $url');
-          final proxyUrl = 'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
-          _webviewController.loadUrl(proxyUrl);
-          return;
-        }
-
-        // Only update if URL actually changed
-        if (_currentUrl == url) return;
-        _currentUrl = url;
-
-        // Update URL bar text
-        if (url.startsWith('http://127.0.0.1:8080/') && 
-            !url.contains('/proxy') && 
-            !url.endsWith('/') &&
-            !url.contains('.js') &&
-            !url.contains('.png') &&
-            !url.contains('.ico')) {
-          try {
-            final encodedPart = url.replaceFirst('http://127.0.0.1:8080/', '').split('?').first;
-            final decoded = Uri.decodeComponent(encodedPart);
-            if (decoded.startsWith('http')) {
-              _urlController.text = decoded;
-            }
-          } catch (_) {}
-        }
-      });
-
-      _webviewController.loadingState.listen((state) {
-        final loading = state == LoadingState.loading;
-        if (_isLoading != loading) {
-          setState(() {
-            _isLoading = loading;
-          });
-        }
-      });
-
-      // Wait a moment for the server to be ready
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      await _webviewController.loadUrl('http://127.0.0.1:8080/');
-      
-      setState(() {
-        _isWebViewReady = true;
-      });
+      if (Platform.isWindows) {
+        await _initWindowsWebView();
+      } else {
+        await _initAndroidWebView();
+      }
     } catch (e) {
       debugPrint('WebView initialization error: $e');
+    }
+  }
+
+  Future<void> _initWindowsWebView() async {
+    await _windowsController.initialize();
+    
+    _windowsController.url.listen((url) {
+      _handleUrlChanged(url);
+    });
+
+    _windowsController.loadingState.listen((state) {
+      final loading = state == ww.LoadingState.loading;
+      if (_isLoading != loading) {
+        setState(() => _isLoading = loading);
+      }
+    });
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _windowsController.loadUrl('http://127.0.0.1:8080/');
+    
+    setState(() {
+      _isWebViewReady = true;
+    });
+  }
+
+  Future<void> _initAndroidWebView() async {
+    _androidController = wf.WebViewController()
+      ..setJavaScriptMode(wf.JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(
+        wf.NavigationDelegate(
+          onProgress: (int progress) {
+            // Update loading bar.
+          },
+          onPageStarted: (String url) {
+            setState(() => _isLoading = true);
+            _handleUrlChanged(url);
+          },
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+          },
+          onWebResourceError: (wf.WebResourceError error) {},
+          onNavigationRequest: (wf.NavigationRequest request) {
+            final url = request.url;
+            if (!url.startsWith('http://127.0.0.1:8080/') && 
+                !url.startsWith('http://localhost:8080/') &&
+                url.startsWith('http')) {
+              debugPrint('Detected external navigation: $url');
+              final proxyUrl = 'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
+              _androidController.loadRequest(Uri.parse(proxyUrl));
+              return wf.NavigationDecision.prevent;
+            }
+            return wf.NavigationDecision.navigate;
+          },
+        ),
+      );
+
+    await _androidController.loadRequest(Uri.parse('http://127.0.0.1:8080/'));
+    
+    setState(() {
+      _isWebViewReady = true;
+    });
+  }
+
+  void _handleUrlChanged(String url) {
+    // Detect navigation away from localhost and redirect through proxy (for Windows listener)
+    if (Platform.isWindows) {
+      if (!url.startsWith('http://127.0.0.1:8080/') && 
+          !url.startsWith('http://localhost:8080/') &&
+          url.startsWith('http')) {
+        debugPrint('Detected external navigation: $url');
+        final proxyUrl = 'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
+        _windowsController.loadUrl(proxyUrl);
+        return;
+      }
+    }
+
+    // Only update if URL actually changed
+    if (_currentUrl == url) return;
+    _currentUrl = url;
+
+    // Update URL bar text
+    if (url.startsWith('http://127.0.0.1:8080/') && 
+        !url.contains('/proxy') && 
+        !url.endsWith('/') &&
+        !url.contains('.js') &&
+        !url.contains('.png') &&
+        !url.contains('.ico')) {
+      try {
+        final encodedPart = url.replaceFirst('http://127.0.0.1:8080/', '').split('?').first;
+        final decoded = Uri.decodeComponent(encodedPart);
+        if (decoded.startsWith('http')) {
+          _urlController.text = decoded;
+        }
+      } catch (_) {}
     }
   }
 
@@ -160,23 +214,44 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     }
 
     final proxyUrl = 'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
-    _webviewController.loadUrl(proxyUrl);
+    if (Platform.isWindows) {
+      _windowsController.loadUrl(proxyUrl);
+    } else {
+      _androidController.loadRequest(Uri.parse(proxyUrl));
+    }
   }
 
   void _goBack() {
-    _webviewController.goBack();
+    if (Platform.isWindows) {
+      _windowsController.goBack();
+    } else {
+      _androidController.goBack();
+    }
   }
 
   void _goForward() {
-    _webviewController.goForward();
+    if (Platform.isWindows) {
+      _windowsController.goForward();
+    } else {
+      _androidController.goForward();
+    }
   }
 
   void _reload() {
-    _webviewController.reload();
+    if (Platform.isWindows) {
+      _windowsController.reload();
+    } else {
+      _androidController.reload();
+    }
   }
 
   void _goHome() {
-    _webviewController.loadUrl('http://127.0.0.1:8080/');
+    final homeUrl = 'http://127.0.0.1:8080/';
+    if (Platform.isWindows) {
+      _windowsController.loadUrl(homeUrl);
+    } else {
+      _androidController.loadRequest(Uri.parse(homeUrl));
+    }
     _urlController.clear();
   }
 
@@ -308,7 +383,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
 
   @override
   void dispose() {
-    _webviewController.dispose();
+    _windowsController.dispose();
     _urlController.dispose();
     _remoteHostController.dispose();
     _remotePortController.dispose();
@@ -835,7 +910,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                 // WebView
                 Expanded(
                   child: _isWebViewReady
-                      ? Webview(_webviewController)
+                      ? (Platform.isWindows
+                          ? ww.Webview(_windowsController)
+                          : wf.WebViewWidget(controller: _androidController))
                       : const Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
