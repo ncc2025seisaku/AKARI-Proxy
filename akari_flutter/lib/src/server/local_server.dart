@@ -15,6 +15,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
 import '../rust/api/akari_client.dart';
+import '../services/monitoring_service.dart';
 import 'rewriter.dart';
 
 /// Configuration for the local proxy server.
@@ -329,13 +330,10 @@ class LocalProxyServer {
 
   Future<Response> _proxyRequest(String targetUrl) async {
     try {
-      // Create a new client for each request to enable parallelism
-      // (The shared client uses Mutex which serializes all requests)
-      final client = await AkariClient.newInstance(
-        host: config.remoteHost,
-        port: config.remotePort,
-        psk: config.psk,
-      );
+      final client = _akariClient;
+      if (client == null) {
+        throw Exception('Proxy client not initialized. Call start() first.');
+      }
 
       // Send request via Rust AkariClient
       final requestConfig = defaultRequestConfig();
@@ -425,12 +423,33 @@ class LocalProxyServer {
         headers['Content-Type'] = 'text/html; charset=utf-8';
       }
 
-      return Response(
+      final response = Response(
         akariResponse.statusCode,
         body: body,
         headers: headers,
       );
+
+      // Log to MonitoringService
+      MonitoringService().addLog(ProxyLogEntry(
+        timestamp: DateTime.now(),
+        method: 'GET', // Path-based and standard proxy are mostly GET
+        url: targetUrl,
+        statusCode: akariResponse.statusCode,
+        bytesSent: akariResponse.stats.bytesSent.toInt(),
+        bytesReceived: akariResponse.stats.bytesReceived.toInt(),
+      ));
+
+      return response;
     } catch (e) {
+      // Log error
+      MonitoringService().addLog(ProxyLogEntry(
+        timestamp: DateTime.now(),
+        method: 'GET',
+        url: targetUrl,
+        statusCode: 502,
+        error: e.toString(),
+      ));
+      
       return Response(502,
           body: 'Proxy error: $e',
           headers: {'Content-Type': 'text/plain; charset=utf-8'});
