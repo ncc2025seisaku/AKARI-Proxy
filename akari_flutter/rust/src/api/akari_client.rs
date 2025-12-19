@@ -228,21 +228,32 @@ impl AkariClientPool {
             return Ok(client);
         }
         
-        // All clients are in use - this shouldn't happen often with async Dart
-        // Fall back to creating a temporary client
+        // All clients are in use - create a temporary client
+        // Note: We increment active_count here too, since release() will decrement it
         drop(pool);
-        RustAkariClient::new(&self.host, self.port, &self.psk)
-            .map_err(|e| e.to_string())
+        let client = RustAkariClient::new(&self.host, self.port, &self.psk)
+            .map_err(|e| e.to_string())?;
+        self.active_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(client)
     }
 
     /// Release a client back to the pool.
     fn release(&self, client: RustAkariClient) {
-        if let Ok(mut pool) = self.pool.lock() {
+        let returned_to_pool = if let Ok(mut pool) = self.pool.lock() {
             if pool.len() < self.pool_size {
                 pool.push(client);
+                true
+            } else {
+                // Pool is full, client will be dropped (socket closed)
+                false
             }
-            // If pool is full, the client is dropped (socket closed)
-        }
+        } else {
+            false
+        };
+        
+        // Always decrement active_count since we always incremented it in acquire()
+        // The client is either returned to pool or dropped
+        let _ = returned_to_pool; // Acknowledge the variable (avoids warning)
         self.active_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 
