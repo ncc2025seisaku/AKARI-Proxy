@@ -49,6 +49,23 @@ gh pr checks <PR番号> --json name,state
 # [{"name":"Flutter Unit Tests","state":"SUCCESS"},...]
 ```
 
+### AI botのレビュー確認
+
+PRが作成されると、AI botが自動的にレビューや変更のまとめを投稿します。
+
+```bash
+# PRのコメント・レビューを確認
+gh pr view <PR番号> --comments
+```
+
+**確認ポイント**:
+- AI botからの変更サマリー
+- 潜在的な問題の指摘
+- 改善提案
+
+問題が指摘された場合は、必要に応じて対応してからマージする。
+
+
 ## 4. CI失敗時の調査
 
 ブラウザでCIログを確認するか、以下のURLを開く：
