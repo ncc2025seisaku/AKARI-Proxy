@@ -118,6 +118,7 @@ impl From<io::Error> for ClientError {
 
 /// Internal accumulator for response packets.
 struct ResponseAccumulator {
+    #[allow(dead_code)]
     message_id: u64,
     /// Body chunks indexed by sequence number.
     body_chunks: HashMap<u16, Vec<u8>>,
@@ -342,6 +343,7 @@ fn build_missing_hdr_bitmap(missing: &[u8]) -> Vec<u8> {
 
 /// AKARI-UDP v3 client.
 pub struct AkariClient {
+    #[allow(dead_code)]
     remote_addr: SocketAddr,
     psk: Vec<u8>,
     socket: UdpSocket,
@@ -440,7 +442,7 @@ impl AkariClient {
                     // Decode packet
                     let parsed = match decode_packet_v3(&buffer[..len], &self.psk) {
                         Ok(p) => p,
-                        Err(e) => {
+                        Err(_e) => {
                             // Skip invalid packets
                             continue;
                         }
@@ -506,7 +508,7 @@ impl AkariClient {
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
                     // Socket timeout - check what to do
-                    let elapsed = last_activity.elapsed();
+                    let _elapsed = last_activity.elapsed();
 
                     // If no packets received yet, retry request
                     if accumulator.body_chunks.is_empty()
