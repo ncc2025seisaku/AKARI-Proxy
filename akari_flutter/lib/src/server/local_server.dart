@@ -184,7 +184,7 @@ class LocalProxyServer {
           file = File('lib/src/server/static/$filename');
         }
 
-        if (file != null && await file.exists()) {
+        if (await file.exists()) {
           body = await file.readAsBytes();
         } else {
           return Response.notFound('File not found: $filename');

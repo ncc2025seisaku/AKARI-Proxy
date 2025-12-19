@@ -18,7 +18,7 @@ final SettingsService _settingsService = SettingsService();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   if (Platform.isWindows) {
     await windowManager.ensureInitialized();
     WindowOptions windowOptions = const WindowOptions(
@@ -66,7 +66,7 @@ class ProxyManager extends ChangeNotifier {
 
   Future<void> start() async {
     if (_isRunning) return;
-    
+
     await _startServer();
     if (_settings.useSystemProxy) {
       await WindowsSystemProxy.enable('127.0.0.1:8080');
@@ -90,7 +90,7 @@ class ProxyManager extends ChangeNotifier {
   Future<void> updateSettings(AkariSettings newSettings) async {
     final oldSettings = _settings;
     _settings = newSettings;
-    
+
     if (_isRunning) {
       // If system proxy setting changed, apply it immediately
       if (oldSettings.useSystemProxy != newSettings.useSystemProxy) {
@@ -100,7 +100,7 @@ class ProxyManager extends ChangeNotifier {
           await WindowsSystemProxy.disable();
         }
       }
-      
+
       // If core proxy settings changed, restart server
       if (oldSettings.remoteHost != newSettings.remoteHost ||
           oldSettings.remotePort != newSettings.remotePort ||
@@ -123,7 +123,7 @@ class ProxyManager extends ChangeNotifier {
         useEncryption: _settings.useEncryption,
       ),
     );
-    
+
     try {
       await _server!.start();
     } catch (e) {
@@ -136,12 +136,14 @@ class ProxyManager extends ChangeNotifier {
     _watchdogTimer?.cancel();
     _watchdogTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
       if (!_isRunning || _isAutoRestarting) return;
-      
+
       try {
         // Simple health check
         final client = HttpClient();
         client.connectionTimeout = const Duration(seconds: 2);
-        final request = await client.getUrl(Uri.parse('http://127.0.0.1:8080/healthz'));
+        final request = await client.getUrl(
+          Uri.parse('http://127.0.0.1:8080/healthz'),
+        );
         final response = await request.close();
         if (response.statusCode != 200) {
           throw Exception('Health check failed');
@@ -157,7 +159,7 @@ class ProxyManager extends ChangeNotifier {
   Future<void> _handleRestart() async {
     if (_isAutoRestarting) return;
     _isAutoRestarting = true;
-    
+
     try {
       await _server?.stop();
       await _startServer();
@@ -176,12 +178,14 @@ class ProxyManager extends ChangeNotifier {
       final client = HttpClient();
       final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({
-        'enable_js': _settings.enableJs,
-        'enable_css': _settings.enableCss,
-        'enable_img': _settings.enableImg,
-        'enable_other': _settings.enableOther
-      }));
+      request.write(
+        jsonEncode({
+          'enable_js': _settings.enableJs,
+          'enable_css': _settings.enableCss,
+          'enable_img': _settings.enableImg,
+          'enable_other': _settings.enableOther,
+        }),
+      );
       await request.close();
       client.close();
     } catch (e) {
@@ -226,7 +230,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   final _windowsController = ww.WebviewController();
   // Android/iOS WebView
   late final wf.WebViewController _androidController;
-  
+
   final _urlController = TextEditingController();
   bool _isWebViewReady = false;
   String _currentUrl = '';
@@ -246,7 +250,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     super.initState();
     _settings = widget.initialSettings;
     _remoteHostController = TextEditingController(text: _settings.remoteHost);
-    _remotePortController = TextEditingController(text: _settings.remotePort.toString());
+    _remotePortController = TextEditingController(
+      text: _settings.remotePort.toString(),
+    );
     _pskController = TextEditingController(text: _settings.pskAsString);
     _initWebView();
     _initTray();
@@ -256,23 +262,15 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     if (!Platform.isWindows) return;
 
     await trayManager.setIcon('lib/src/server/static/favicon.ico');
-    
+
     List<MenuItem> items = [
-      MenuItem(
-        key: 'show_window',
-        label: 'ウィンドウを表示',
-      ),
+      MenuItem(key: 'show_window', label: 'ウィンドウを表示'),
       MenuItem.separator(),
-      MenuItem(
-        key: 'exit_app',
-        label: '終了',
-      ),
+      MenuItem(key: 'exit_app', label: '終了'),
     ];
     await trayManager.setContextMenu(Menu(items: items));
     trayManager.addListener(TrayListenerImpl());
   }
-
-
 
   Future<void> _initWebView() async {
     try {
@@ -288,7 +286,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
 
   Future<void> _initWindowsWebView() async {
     await _windowsController.initialize();
-    
+
     _windowsController.url.listen((url) {
       _handleUrlChanged(url);
     });
@@ -302,7 +300,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
 
     await Future.delayed(const Duration(milliseconds: 500));
     await _windowsController.loadUrl('http://127.0.0.1:8080/');
-    
+
     setState(() {
       _isWebViewReady = true;
     });
@@ -327,11 +325,12 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
           onWebResourceError: (wf.WebResourceError error) {},
           onNavigationRequest: (wf.NavigationRequest request) {
             final url = request.url;
-            if (!url.startsWith('http://127.0.0.1:8080/') && 
+            if (!url.startsWith('http://127.0.0.1:8080/') &&
                 !url.startsWith('http://localhost:8080/') &&
                 url.startsWith('http')) {
               debugPrint('Detected external navigation: $url');
-              final proxyUrl = 'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
+              final proxyUrl =
+                  'http://127.0.0.1:8080/${Uri.encodeComponent(url)}';
               _androidController.loadRequest(Uri.parse(proxyUrl));
               return wf.NavigationDecision.prevent;
             }
@@ -341,7 +340,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
       );
 
     await _androidController.loadRequest(Uri.parse('http://127.0.0.1:8080/'));
-    
+
     setState(() {
       _isWebViewReady = true;
     });
@@ -350,7 +349,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   void _handleUrlChanged(String url) {
     // Detect navigation away from localhost and redirect through proxy (for Windows listener)
     if (Platform.isWindows) {
-      if (!url.startsWith('http://127.0.0.1:8080/') && 
+      if (!url.startsWith('http://127.0.0.1:8080/') &&
           !url.startsWith('http://localhost:8080/') &&
           url.startsWith('http')) {
         debugPrint('Detected external navigation: $url');
@@ -365,14 +364,17 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     _currentUrl = url;
 
     // Update URL bar text
-    if (url.startsWith('http://127.0.0.1:8080/') && 
-        !url.contains('/proxy') && 
+    if (url.startsWith('http://127.0.0.1:8080/') &&
+        !url.contains('/proxy') &&
         !url.endsWith('/') &&
         !url.contains('.js') &&
         !url.contains('.png') &&
         !url.contains('.ico')) {
       try {
-        final encodedPart = url.replaceFirst('http://127.0.0.1:8080/', '').split('?').first;
+        final encodedPart = url
+            .replaceFirst('http://127.0.0.1:8080/', '')
+            .split('?')
+            .first;
         final decoded = Uri.decodeComponent(encodedPart);
         if (decoded.startsWith('http')) {
           _urlController.text = decoded;
@@ -452,16 +454,16 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     final pskString = _pskController.text.trim();
 
     if (host.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('リモートホストを入力してください')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('リモートホストを入力してください')));
       return;
     }
 
     if (pskString.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PSKを入力してください')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('PSKを入力してください')));
       return;
     }
 
@@ -489,7 +491,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('接続先を ${_settings.remoteHost}:${_settings.remotePort} に変更しました'),
+            content: Text(
+              '接続先を ${_settings.remoteHost}:${_settings.remotePort} に変更しました',
+            ),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -512,21 +516,6 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
           _isReconnecting = false;
         });
       }
-    }
-  }
-
-  /// Sync filter settings to the local proxy server via API.
-  Future<void> _syncFilterSettings() async {
-    try {
-      final uri = Uri.parse('http://127.0.0.1:8080/api/filter');
-      final client = HttpClient();
-      final request = await client.postUrl(uri);
-      request.headers.contentType = ContentType.json;
-      request.write('{"enable_js":${_settings.enableJs},"enable_css":${_settings.enableCss},"enable_img":${_settings.enableImg},"enable_other":${_settings.enableOther}}');
-      await request.close();
-      client.close();
-    } catch (e) {
-      debugPrint('Failed to sync filter settings: $e');
     }
   }
 
@@ -556,7 +545,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     });
 
     _settingsService.save(_settings);
-    
+
     // Update settings in ProxyManager as well
     _proxyManager?.updateSettings(_settings).then((_) {
       _proxyManager?.syncFilterSettings();
@@ -577,11 +566,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
-        border: Border(
-          right: BorderSide(
-            color: Colors.white.withOpacity(0.1),
-          ),
-        ),
+        border: Border(right: BorderSide(color: Colors.white.withOpacity(0.1))),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.5),
@@ -598,18 +583,12 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(
-                  color: Colors.white.withOpacity(0.1),
-                ),
+                bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
               ),
             ),
             child: Row(
               children: [
-                const Icon(
-                  Icons.analytics,
-                  color: Color(0xFFF3C45C),
-                  size: 24,
-                ),
+                const Icon(Icons.analytics, color: Color(0xFFF3C45C), size: 24),
                 const SizedBox(width: 12),
                 const Text(
                   'モニタリング',
@@ -638,11 +617,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
-        border: Border(
-          left: BorderSide(
-            color: Colors.white.withOpacity(0.1),
-          ),
-        ),
+        border: Border(left: BorderSide(color: Colors.white.withOpacity(0.1))),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.5),
@@ -659,18 +634,12 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(
-                  color: Colors.white.withOpacity(0.1),
-                ),
+                bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
               ),
             ),
             child: Row(
               children: [
-                const Icon(
-                  Icons.settings,
-                  color: Color(0xFFF3C45C),
-                  size: 24,
-                ),
+                const Icon(Icons.settings, color: Color(0xFFF3C45C), size: 24),
                 const SizedBox(width: 12),
                 const Text(
                   'AKARI 設定',
@@ -689,202 +658,201 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
               ],
             ),
           ),
-                  // Settings content
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Remote Proxy Section
-                          Text(
-                            'リモートプロキシ',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.6),
-                              fontSize: 12,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          // Host input
-                          _buildInputField(
-                            controller: _remoteHostController,
-                            label: 'ホスト / IP アドレス',
-                            hint: '127.0.0.1',
-                            icon: Icons.dns,
-                          ),
-                          const SizedBox(height: 12),
-                          // Port input
-                          _buildInputField(
-                            controller: _remotePortController,
-                            label: 'ポート',
-                            hint: '9000',
-                            icon: Icons.numbers,
-                            keyboardType: TextInputType.number,
-                          ),
-                          const SizedBox(height: 12),
-                          // PSK input
-                          _buildInputField(
-                            controller: _pskController,
-                            label: 'PSK (事前共有鍵)',
-                            hint: 'test-psk-0000-test',
-                            icon: Icons.key,
-                          ),
-                          const SizedBox(height: 16),
-                          // Connection status
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.3),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.1),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: _proxyManager?.isRunning == true
-                                        ? Colors.green
-                                        : Colors.red,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: (_proxyManager?.isRunning == true
-                                                ? Colors.green
-                                                : Colors.red)
-                                            .withOpacity(0.5),
-                                        blurRadius: 6,
-                                        spreadRadius: 2,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    '${_settings.remoteHost}:${_settings.remotePort}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          // Save button
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: _isReconnecting ? null : _saveAndReconnect,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFF3C45C),
-                                foregroundColor: const Color(0xFF0A0A0A),
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: _isReconnecting
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Color(0xFF0A0A0A),
-                                      ),
-                                    )
-                                  : const Text(
-                                      '保存して再接続',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-                          // Divider
-                          Divider(color: Colors.white.withOpacity(0.1)),
-                          const SizedBox(height: 20),
-                          // Content Filter Section
-                          Text(
-                            'コンテンツフィルター',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.6),
-                              fontSize: 12,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          // Filter toggles
-                          _buildToggleSwitch(
-                            label: 'JavaScript',
-                            description: 'script / module の読み込み',
-                            value: _settings.enableJs,
-                            onChanged: (v) => _toggleFilter('enableJs', v),
-                          ),
-                          const SizedBox(height: 8),
-                          _buildToggleSwitch(
-                            label: 'CSS',
-                            description: 'スタイルシートの読み込み',
-                            value: _settings.enableCss,
-                            onChanged: (v) => _toggleFilter('enableCss', v),
-                          ),
-                          const SizedBox(height: 8),
-                          _buildToggleSwitch(
-                            label: '画像 (IMG)',
-                            description: '画像リソースの取得',
-                            value: _settings.enableImg,
-                            onChanged: (v) => _toggleFilter('enableImg', v),
-                          ),
-                          const SizedBox(height: 8),
-                          _buildToggleSwitch(
-                            label: 'その他',
-                            description: 'その他のリソース',
-                            value: _settings.enableOther,
-                            onChanged: (v) => _toggleFilter('enableOther', v),
-                          ),
-                          const SizedBox(height: 20),
-                          // Divider
-                          Divider(color: Colors.white.withOpacity(0.1)),
-                          const SizedBox(height: 20),
-                          // Encryption Section
-                          Text(
-                            'セキュリティ',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.6),
-                              fontSize: 12,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildToggleSwitch(
-                            label: '暗号化 (Encrypt)',
-                            description: 'UDP ペイロードを暗号化',
-                            value: _settings.useEncryption,
-                            onChanged: (v) => _toggleFilter('useEncryption', v),
-                            accentColor: const Color(0xFF4FC3F7),
-                          ),
-                          const SizedBox(height: 8),
-                          if (Platform.isWindows)
-                            _buildToggleSwitch(
-                              label: 'システムプロキシ',
-                              description: 'OS のプロキシ設定を自動更新',
-                              value: _settings.useSystemProxy,
-                              onChanged: (v) => _toggleFilter('useSystemProxy', v),
-                              accentColor: const Color(0xFFA5D6A7),
-                            ),
-                        ],
-                      ),
+          // Settings content
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Remote Proxy Section
+                  Text(
+                    'リモートプロキシ',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                      letterSpacing: 1.2,
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  // Host input
+                  _buildInputField(
+                    controller: _remoteHostController,
+                    label: 'ホスト / IP アドレス',
+                    hint: '127.0.0.1',
+                    icon: Icons.dns,
+                  ),
+                  const SizedBox(height: 12),
+                  // Port input
+                  _buildInputField(
+                    controller: _remotePortController,
+                    label: 'ポート',
+                    hint: '9000',
+                    icon: Icons.numbers,
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 12),
+                  // PSK input
+                  _buildInputField(
+                    controller: _pskController,
+                    label: 'PSK (事前共有鍵)',
+                    hint: 'test-psk-0000-test',
+                    icon: Icons.key,
+                  ),
+                  const SizedBox(height: 16),
+                  // Connection status
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.1)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _proxyManager?.isRunning == true
+                                ? Colors.green
+                                : Colors.red,
+                            boxShadow: [
+                              BoxShadow(
+                                color:
+                                    (_proxyManager?.isRunning == true
+                                            ? Colors.green
+                                            : Colors.red)
+                                        .withOpacity(0.5),
+                                blurRadius: 6,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '${_settings.remoteHost}:${_settings.remotePort}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Save button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isReconnecting ? null : _saveAndReconnect,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF3C45C),
+                        foregroundColor: const Color(0xFF0A0A0A),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: _isReconnecting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFF0A0A0A),
+                              ),
+                            )
+                          : const Text(
+                              '保存して再接続',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  // Divider
+                  Divider(color: Colors.white.withOpacity(0.1)),
+                  const SizedBox(height: 20),
+                  // Content Filter Section
+                  Text(
+                    'コンテンツフィルター',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Filter toggles
+                  _buildToggleSwitch(
+                    label: 'JavaScript',
+                    description: 'script / module の読み込み',
+                    value: _settings.enableJs,
+                    onChanged: (v) => _toggleFilter('enableJs', v),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildToggleSwitch(
+                    label: 'CSS',
+                    description: 'スタイルシートの読み込み',
+                    value: _settings.enableCss,
+                    onChanged: (v) => _toggleFilter('enableCss', v),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildToggleSwitch(
+                    label: '画像 (IMG)',
+                    description: '画像リソースの取得',
+                    value: _settings.enableImg,
+                    onChanged: (v) => _toggleFilter('enableImg', v),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildToggleSwitch(
+                    label: 'その他',
+                    description: 'その他のリソース',
+                    value: _settings.enableOther,
+                    onChanged: (v) => _toggleFilter('enableOther', v),
+                  ),
+                  const SizedBox(height: 20),
+                  // Divider
+                  Divider(color: Colors.white.withOpacity(0.1)),
+                  const SizedBox(height: 20),
+                  // Encryption Section
+                  Text(
+                    'セキュリティ',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildToggleSwitch(
+                    label: '暗号化 (Encrypt)',
+                    description: 'UDP ペイロードを暗号化',
+                    value: _settings.useEncryption,
+                    onChanged: (v) => _toggleFilter('useEncryption', v),
+                    accentColor: const Color(0xFF4FC3F7),
+                  ),
+                  const SizedBox(height: 8),
+                  if (Platform.isWindows)
+                    _buildToggleSwitch(
+                      label: 'システムプロキシ',
+                      description: 'OS のプロキシ設定を自動更新',
+                      value: _settings.useSystemProxy,
+                      onChanged: (v) => _toggleFilter('useSystemProxy', v),
+                      accentColor: const Color(0xFFA5D6A7),
+                    ),
                 ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -901,32 +869,22 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 13,
-          ),
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
         ),
         const SizedBox(height: 6),
         Container(
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.3),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.15),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.15)),
           ),
           child: TextField(
             controller: controller,
             keyboardType: keyboardType,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white, fontSize: 14),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.3),
-              ),
+              hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
               prefixIcon: Icon(
                 icon,
                 color: Colors.white.withOpacity(0.5),
@@ -960,7 +918,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
           color: Colors.black.withOpacity(0.2),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: value ? accentColor.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+            color: value
+                ? accentColor.withOpacity(0.3)
+                : Colors.white.withOpacity(0.1),
           ),
         ),
         child: Row(
@@ -1005,7 +965,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: value ? const Color(0xFF0A0A0A) : const Color(0xFF0A0A0A),
+                    color: value
+                        ? const Color(0xFF0A0A0A)
+                        : const Color(0xFF0A0A0A),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.3),
@@ -1037,9 +999,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A1A1A),
                   border: Border(
-                    bottom: BorderSide(
-                      color: Colors.white.withOpacity(0.1),
-                    ),
+                    bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
                   ),
                 ),
                 child: SafeArea(
@@ -1060,7 +1020,10 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                         tooltip: '進む',
                       ),
                       IconButton(
-                        icon: Icon(_isLoading ? Icons.close : Icons.refresh, size: 20),
+                        icon: Icon(
+                          _isLoading ? Icons.close : Icons.refresh,
+                          size: 20,
+                        ),
                         color: Colors.white70,
                         onPressed: _reload,
                         tooltip: _isLoading ? '中止' : '再読み込み',
@@ -1096,7 +1059,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                                 fontSize: 14,
                               ),
                               border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
                             ),
                             onSubmitted: (url) {
                               if (url.isNotEmpty) {
@@ -1140,22 +1105,22 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
               if (_isLoading)
                 LinearProgressIndicator(
                   backgroundColor: Colors.transparent,
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFF3C45C)),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFF3C45C),
+                  ),
                   minHeight: 2,
                 ),
               // WebView
               Expanded(
                 child: _isWebViewReady
                     ? (Platform.isWindows
-                        ? ww.Webview(_windowsController)
-                        : wf.WebViewWidget(controller: _androidController))
+                          ? ww.Webview(_windowsController)
+                          : wf.WebViewWidget(controller: _androidController))
                     : const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            CircularProgressIndicator(
-                              color: Color(0xFFF3C45C),
-                            ),
+                            CircularProgressIndicator(color: Color(0xFFF3C45C)),
                             SizedBox(height: 16),
                             Text(
                               'AKARI Proxy を起動中...',
@@ -1170,7 +1135,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
               ),
             ],
           ),
-          
+
           // Overlay to close side panels when clicking outside
           if (_settingsOpen || _monitoringOpen)
             Positioned.fill(
