@@ -219,6 +219,7 @@ pub fn encode_error_v3(message: &str, code: u8, http_status: u16, message_id: u6
 }
 
 // helper to compute max chunk size given MTU (payload part only)
+#[allow(dead_code)]
 pub fn max_body_chunk_len(mtu: usize, header_len: usize) -> usize {
     // mtu >= header + payload + tag; tag fixed 16B
     mtu.saturating_sub(header_len + TAG_LEN)

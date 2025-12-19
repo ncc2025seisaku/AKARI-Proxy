@@ -67,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => -920530297;
+  int get rustContentHash => 737333047;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -78,6 +78,35 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  BigInt crateApiAkariClientAkariClientPoolActiveCount({
+    required AkariClientPool that,
+  });
+
+  Future<AkariClientPool> crateApiAkariClientAkariClientPoolNew({
+    required String host,
+    required int port,
+    required List<int> psk,
+    required BigInt poolSize,
+  });
+
+  BigInt crateApiAkariClientAkariClientPoolPoolSize({
+    required AkariClientPool that,
+  });
+
+  Future<AkariHttpResponse> crateApiAkariClientAkariClientPoolSendRequest({
+    required AkariClientPool that,
+    required String url,
+    required AkariRequestConfig config,
+  });
+
+  Future<AkariHttpResponse>
+  crateApiAkariClientAkariClientPoolSendRequestWithMethod({
+    required AkariClientPool that,
+    required String url,
+    required String method,
+    required AkariRequestConfig config,
+  });
+
   Future<AkariClient> crateApiAkariClientAkariClientNew({
     required String host,
     required int port,
@@ -113,6 +142,15 @@ abstract class RustLibApi extends BaseApi {
   get rust_arc_decrement_strong_count_AkariClient;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_AkariClientPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_AkariClientPool;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_AkariClientPool;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_AkariClientPoolPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -122,6 +160,193 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required super.generalizedFrbRustBinding,
     required super.portManager,
   });
+
+  @override
+  BigInt crateApiAkariClientAkariClientPoolActiveCount({
+    required AkariClientPool that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_usize,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiAkariClientAkariClientPoolActiveCountConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAkariClientAkariClientPoolActiveCountConstMeta =>
+      const TaskConstMeta(
+        debugName: "AkariClientPool_active_count",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<AkariClientPool> crateApiAkariClientAkariClientPoolNew({
+    required String host,
+    required int port,
+    required List<int> psk,
+    required BigInt poolSize,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(host, serializer);
+          sse_encode_u_16(port, serializer);
+          sse_encode_list_prim_u_8_loose(psk, serializer);
+          sse_encode_usize(poolSize, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiAkariClientAkariClientPoolNewConstMeta,
+        argValues: [host, port, psk, poolSize],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAkariClientAkariClientPoolNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "AkariClientPool_new",
+        argNames: ["host", "port", "psk", "poolSize"],
+      );
+
+  @override
+  BigInt crateApiAkariClientAkariClientPoolPoolSize({
+    required AkariClientPool that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_usize,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiAkariClientAkariClientPoolPoolSizeConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAkariClientAkariClientPoolPoolSizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "AkariClientPool_pool_size",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<AkariHttpResponse> crateApiAkariClientAkariClientPoolSendRequest({
+    required AkariClientPool that,
+    required String url,
+    required AkariRequestConfig config,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+            that,
+            serializer,
+          );
+          sse_encode_String(url, serializer);
+          sse_encode_box_autoadd_akari_request_config(config, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_akari_http_response,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiAkariClientAkariClientPoolSendRequestConstMeta,
+        argValues: [that, url, config],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiAkariClientAkariClientPoolSendRequestConstMeta =>
+      const TaskConstMeta(
+        debugName: "AkariClientPool_send_request",
+        argNames: ["that", "url", "config"],
+      );
+
+  @override
+  Future<AkariHttpResponse>
+  crateApiAkariClientAkariClientPoolSendRequestWithMethod({
+    required AkariClientPool that,
+    required String url,
+    required String method,
+    required AkariRequestConfig config,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+            that,
+            serializer,
+          );
+          sse_encode_String(url, serializer);
+          sse_encode_String(method, serializer);
+          sse_encode_box_autoadd_akari_request_config(config, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_akari_http_response,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta:
+            kCrateApiAkariClientAkariClientPoolSendRequestWithMethodConstMeta,
+        argValues: [that, url, method, config],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiAkariClientAkariClientPoolSendRequestWithMethodConstMeta =>
+      const TaskConstMeta(
+        debugName: "AkariClientPool_send_request_with_method",
+        argNames: ["that", "url", "method", "config"],
+      );
 
   @override
   Future<AkariClient> crateApiAkariClientAkariClientNew({
@@ -139,7 +364,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 6,
             port: port_,
           );
         },
@@ -180,7 +405,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 2,
+            funcId: 7,
             port: port_,
           );
         },
@@ -223,7 +448,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 8,
             port: port_,
           );
         },
@@ -255,7 +480,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 9,
             port: port_,
           );
         },
@@ -282,7 +507,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_akari_request_config,
@@ -305,7 +530,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -330,7 +555,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 12,
             port: port_,
           );
         },
@@ -356,6 +581,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get rust_arc_decrement_strong_count_AkariClient => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient;
 
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_AkariClientPool => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_AkariClientPool => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool;
+
   @protected
   AkariClient
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
@@ -363,6 +596,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return AkariClientImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  AkariClientPool
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -375,12 +617,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AkariClientPool
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   AkariClient
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return AkariClientImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  AkariClientPool
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -535,6 +795,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AkariClientPool
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   AkariClient
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
     SseDeserializer deserializer,
@@ -547,12 +819,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AkariClientPool
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   AkariClient
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return AkariClientImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  AkariClientPool
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return AkariClientPoolImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -747,6 +1043,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    AkariClientPool self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as AkariClientPoolImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
     AkariClient self,
     SseSerializer serializer,
@@ -760,6 +1069,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    AkariClientPool self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as AkariClientPoolImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClient(
     AkariClient self,
     SseSerializer serializer,
@@ -767,6 +1089,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as AkariClientImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAkariClientPool(
+    AkariClientPool self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as AkariClientPoolImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -969,6 +1304,60 @@ class AkariClientImpl extends RustOpaque implements AkariClient {
     required AkariRequestConfig config,
   }) =>
       RustLib.instance.api.crateApiAkariClientAkariClientSendRequestWithMethod(
+        that: this,
+        url: url,
+        method: method,
+        config: config,
+      );
+}
+
+@sealed
+class AkariClientPoolImpl extends RustOpaque implements AkariClientPool {
+  // Not to be used by end users
+  AkariClientPoolImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  AkariClientPoolImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_AkariClientPool,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_AkariClientPool,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_AkariClientPoolPtr,
+  );
+
+  /// Get the current number of active clients.
+  BigInt activeCount() => RustLib.instance.api
+      .crateApiAkariClientAkariClientPoolActiveCount(that: this);
+
+  /// Get the pool size (maximum number of concurrent clients).
+  BigInt poolSize() => RustLib.instance.api
+      .crateApiAkariClientAkariClientPoolPoolSize(that: this);
+
+  /// Send an HTTP GET request and return the response.
+  ///
+  /// This method acquires a client from the pool, sends the request,
+  /// and releases the client back to the pool.
+  Future<AkariHttpResponse> sendRequest({
+    required String url,
+    required AkariRequestConfig config,
+  }) => RustLib.instance.api.crateApiAkariClientAkariClientPoolSendRequest(
+    that: this,
+    url: url,
+    config: config,
+  );
+
+  /// Send an HTTP request with specified method.
+  Future<AkariHttpResponse> sendRequestWithMethod({
+    required String url,
+    required String method,
+    required AkariRequestConfig config,
+  }) => RustLib.instance.api
+      .crateApiAkariClientAkariClientPoolSendRequestWithMethod(
         that: this,
         url: url,
         method: method,
