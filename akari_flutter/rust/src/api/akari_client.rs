@@ -110,6 +110,7 @@ impl AkariClient {
     pub fn send_request(
         &self,
         url: String,
+        headers: Vec<(String, String)>,
         config: AkariRequestConfig,
     ) -> Result<AkariHttpResponse, String> {
         let guard = self.inner.lock().map_err(|e| e.to_string())?;
@@ -123,7 +124,7 @@ impl AkariClient {
             .unwrap_or(0);
 
         guard
-            .send_request(&url, "GET", &[], message_id, timestamp, &rust_config)
+            .send_request(&url, "GET", &headers, message_id, timestamp, &rust_config)
             .map(AkariHttpResponse::from)
             .map_err(|e| e.to_string())
     }
@@ -133,6 +134,7 @@ impl AkariClient {
         &self,
         url: String,
         method: String,
+        headers: Vec<(String, String)>,
         config: AkariRequestConfig,
     ) -> Result<AkariHttpResponse, String> {
         let guard = self.inner.lock().map_err(|e| e.to_string())?;
@@ -146,7 +148,7 @@ impl AkariClient {
             .unwrap_or(0);
 
         guard
-            .send_request(&url, &method, &[], message_id, timestamp, &rust_config)
+            .send_request(&url, &method, &headers, message_id, timestamp, &rust_config)
             .map(AkariHttpResponse::from)
             .map_err(|e| e.to_string())
     }
@@ -264,6 +266,7 @@ impl AkariClientPool {
     pub fn send_request(
         &self,
         url: String,
+        headers: Vec<(String, String)>,
         config: AkariRequestConfig,
     ) -> Result<AkariHttpResponse, String> {
         let client = self.acquire()?;
@@ -277,7 +280,7 @@ impl AkariClientPool {
             .unwrap_or(0);
 
         let result = client
-            .send_request(&url, "GET", &[], message_id, timestamp, &rust_config)
+            .send_request(&url, "GET", &headers, message_id, timestamp, &rust_config)
             .map(AkariHttpResponse::from)
             .map_err(|e| e.to_string());
 
@@ -290,6 +293,7 @@ impl AkariClientPool {
         &self,
         url: String,
         method: String,
+        headers: Vec<(String, String)>,
         config: AkariRequestConfig,
     ) -> Result<AkariHttpResponse, String> {
         let client = self.acquire()?;
@@ -303,7 +307,7 @@ impl AkariClientPool {
             .unwrap_or(0);
 
         let result = client
-            .send_request(&url, &method, &[], message_id, timestamp, &rust_config)
+            .send_request(&url, &method, &headers, message_id, timestamp, &rust_config)
             .map(AkariHttpResponse::from)
             .map_err(|e| e.to_string());
 
