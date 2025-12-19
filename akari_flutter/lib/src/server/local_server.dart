@@ -42,7 +42,8 @@ class LocalProxyServer {
   final ProxyServerConfig config;
   HttpServer? _server;
   final Router _router = Router();
-  AkariClient? _akariClient;
+  AkariClientPool? _clientPool;
+  static const int _defaultPoolSize = 4;
   late final ProxyRewriterConfig _rewriterConfig;
 
   LocalProxyServer(this.config) {
@@ -126,9 +127,11 @@ class LocalProxyServer {
         headers: {'Content-Type': 'application/json; charset=utf-8'},
       );
     } catch (e) {
-      return Response(400,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'});
+      return Response(
+        400,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      );
     }
   }
 
@@ -141,7 +144,7 @@ class LocalProxyServer {
   Future<Response> _handleStaticFile(Request request) async {
     final path = request.url.path;
     final filename = path.startsWith('/') ? path.substring(1) : path;
-    
+
     String contentType;
     if (filename.endsWith('.png')) {
       contentType = 'image/png';
@@ -156,7 +159,7 @@ class LocalProxyServer {
     } else {
       contentType = 'application/octet-stream';
     }
-    
+
     return _serveStaticFile(filename, contentType);
   }
 
@@ -169,8 +172,10 @@ class LocalProxyServer {
         // Get the directory where this script is located
         final scriptDir = Platform.script.resolve('.').toFilePath();
         // Navigate to lib/src/server/static from the build output
-        final staticDir = Directory('${scriptDir}data/flutter_assets/packages/akari_flutter/lib/src/server/static');
-        
+        final staticDir = Directory(
+          '${scriptDir}data/flutter_assets/packages/akari_flutter/lib/src/server/static',
+        );
+
         File? file;
         if (await staticDir.exists()) {
           file = File('${staticDir.path}/$filename');
@@ -196,7 +201,7 @@ class LocalProxyServer {
           return Response.notFound('Asset not found: $filename');
         }
       }
-      
+
       return Response.ok(
         body,
         headers: {
@@ -205,17 +210,20 @@ class LocalProxyServer {
         },
       );
     } catch (e) {
-      return Response.internalServerError(body: 'Error serving static file: $e');
+      return Response.internalServerError(
+        body: 'Error serving static file: $e',
+      );
     }
   }
 
   /// Start the HTTP server.
   Future<void> start() async {
-    // Initialize AkariClient connected to remote proxy
-    _akariClient = await AkariClient.newInstance(
+    // Initialize AkariClientPool for concurrent requests
+    _clientPool = await AkariClientPool.newInstance(
       host: config.remoteHost,
       port: config.remotePort,
       psk: config.psk,
+      poolSize: BigInt.from(_defaultPoolSize),
     );
 
     final handler = Pipeline()
@@ -224,14 +232,16 @@ class LocalProxyServer {
         .addHandler(_router.call);
 
     _server = await shelf_io.serve(handler, config.host, config.port);
-    print('AKARI Local Proxy listening on http://${config.host}:${config.port}');
+    print(
+      'AKARI Local Proxy listening on http://${config.host}:${config.port}',
+    );
   }
 
   /// Stop the HTTP server.
   Future<void> stop() async {
     await _server?.close(force: true);
     _server = null;
-    _akariClient = null;
+    _clientPool = null;
   }
 
   /// CORS middleware for browser compatibility.
@@ -262,9 +272,11 @@ class LocalProxyServer {
   Future<Response> _handleProxy(Request request) async {
     final url = request.url.queryParameters['url'];
     if (url == null || url.isEmpty) {
-      return Response(400,
-          body: 'url parameter required',
-          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+      return Response(
+        400,
+        body: 'url parameter required',
+        headers: {'Content-Type': 'text/plain; charset=utf-8'},
+      );
     }
     return await _proxyRequest(url);
   }
@@ -290,9 +302,11 @@ class LocalProxyServer {
     url ??= request.url.queryParameters['url'];
 
     if (url == null || url.isEmpty) {
-      return Response(400,
-          body: 'url parameter required',
-          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+      return Response(
+        400,
+        body: 'url parameter required',
+        headers: {'Content-Type': 'text/plain; charset=utf-8'},
+      );
     }
     return await _proxyRequest(url);
   }
@@ -307,7 +321,7 @@ class LocalProxyServer {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return Response.notFound('Not Found');
     }
-    
+
     // Merge query parameters from the proxy URL into the target URL
     // This handles cases like Google redirects that add ?sei=xxx to the proxy URL
     final proxyQuery = request.url.queryParameters;
@@ -316,7 +330,7 @@ class LocalProxyServer {
       final targetParams = Map<String, String>.from(proxyQuery)
         ..remove('enc')
         ..remove('_akari_ref');
-      
+
       if (targetParams.isNotEmpty) {
         final targetUri = Uri.parse(url);
         final mergedParams = Map<String, String>.from(targetUri.queryParameters)
@@ -324,20 +338,20 @@ class LocalProxyServer {
         url = targetUri.replace(queryParameters: mergedParams).toString();
       }
     }
-    
+
     return await _proxyRequest(url);
   }
 
   Future<Response> _proxyRequest(String targetUrl) async {
     try {
-      final client = _akariClient;
-      if (client == null) {
-        throw Exception('Proxy client not initialized. Call start() first.');
+      final pool = _clientPool;
+      if (pool == null) {
+        throw Exception('Client pool not initialized. Call start() first.');
       }
 
-      // Send request via Rust AkariClient
+      // Send request via Rust AkariClientPool (automatically uses available client)
       final requestConfig = defaultRequestConfig();
-      final akariResponse = await client.sendRequest(
+      final akariResponse = await pool.sendRequest(
         url: targetUrl,
         config: requestConfig,
       );
@@ -379,12 +393,13 @@ class LocalProxyServer {
       body = decompressedBody;
 
       // Determine content type and rewrite if needed
-      final contentType = headers['Content-Type'] ?? 
-                          headers['content-type'] ?? 
-                          'text/html; charset=utf-8';
+      final contentType =
+          headers['Content-Type'] ??
+          headers['content-type'] ??
+          'text/html; charset=utf-8';
 
       final rewriteType = getRewriteContentType(contentType);
-      
+
       // Try to rewrite even if decompression failed (failsoft approach)
       // This handles cases where we get uncompressed content or when
       // the encoding is unsupported (like Brotli)
@@ -395,16 +410,28 @@ class LocalProxyServer {
               final text = utf8.decode(body, allowMalformed: true);
               // Only rewrite if it looks like valid HTML (contains < character)
               if (text.contains('<')) {
-                final rewritten = rewriteHtmlToProxy(text, targetUrl, _rewriterConfig);
+                final rewritten = rewriteHtmlToProxy(
+                  text,
+                  targetUrl,
+                  _rewriterConfig,
+                );
                 body = utf8.encode(rewritten);
               }
             case RewriteContentType.css:
               final text = utf8.decode(body, allowMalformed: true);
-              final rewritten = rewriteCssToProxy(text, targetUrl, _rewriterConfig);
+              final rewritten = rewriteCssToProxy(
+                text,
+                targetUrl,
+                _rewriterConfig,
+              );
               body = utf8.encode(rewritten);
             case RewriteContentType.javascript:
               final text = utf8.decode(body, allowMalformed: true);
-              final rewritten = rewriteJsToProxy(text, targetUrl, _rewriterConfig);
+              final rewritten = rewriteJsToProxy(
+                text,
+                targetUrl,
+                _rewriterConfig,
+              );
               body = utf8.encode(rewritten);
             case RewriteContentType.none:
               break;
@@ -418,7 +445,7 @@ class LocalProxyServer {
       headers['Content-Length'] = body.length.toString();
 
       // Set Content-Type if not present
-      if (!headers.containsKey('Content-Type') && 
+      if (!headers.containsKey('Content-Type') &&
           !headers.containsKey('content-type')) {
         headers['Content-Type'] = 'text/html; charset=utf-8';
       }
@@ -430,29 +457,35 @@ class LocalProxyServer {
       );
 
       // Log to MonitoringService
-      MonitoringService().addLog(ProxyLogEntry(
-        timestamp: DateTime.now(),
-        method: 'GET', // Path-based and standard proxy are mostly GET
-        url: targetUrl,
-        statusCode: akariResponse.statusCode,
-        bytesSent: akariResponse.stats.bytesSent.toInt(),
-        bytesReceived: akariResponse.stats.bytesReceived.toInt(),
-      ));
+      MonitoringService().addLog(
+        ProxyLogEntry(
+          timestamp: DateTime.now(),
+          method: 'GET', // Path-based and standard proxy are mostly GET
+          url: targetUrl,
+          statusCode: akariResponse.statusCode,
+          bytesSent: akariResponse.stats.bytesSent.toInt(),
+          bytesReceived: akariResponse.stats.bytesReceived.toInt(),
+        ),
+      );
 
       return response;
     } catch (e) {
       // Log error
-      MonitoringService().addLog(ProxyLogEntry(
-        timestamp: DateTime.now(),
-        method: 'GET',
-        url: targetUrl,
-        statusCode: 502,
-        error: e.toString(),
-      ));
-      
-      return Response(502,
-          body: 'Proxy error: $e',
-          headers: {'Content-Type': 'text/plain; charset=utf-8'});
+      MonitoringService().addLog(
+        ProxyLogEntry(
+          timestamp: DateTime.now(),
+          method: 'GET',
+          url: targetUrl,
+          statusCode: 502,
+          error: e.toString(),
+        ),
+      );
+
+      return Response(
+        502,
+        body: 'Proxy error: $e',
+        headers: {'Content-Type': 'text/plain; charset=utf-8'},
+      );
     }
   }
 }

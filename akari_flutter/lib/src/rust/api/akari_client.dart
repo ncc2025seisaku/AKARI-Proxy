@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'akari_client.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `to_rust`
+// These functions are ignored because they are not marked as `pub`: `acquire`, `release`, `to_rust`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
 
 /// Create a default request configuration.
@@ -30,6 +30,50 @@ abstract class AkariClient implements RustOpaqueInterface {
   );
 
   /// Send an HTTP GET request and return the response.
+  Future<AkariHttpResponse> sendRequest({
+    required String url,
+    required AkariRequestConfig config,
+  });
+
+  /// Send an HTTP request with specified method.
+  Future<AkariHttpResponse> sendRequestWithMethod({
+    required String url,
+    required String method,
+    required AkariRequestConfig config,
+  });
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AkariClientPool>>
+abstract class AkariClientPool implements RustOpaqueInterface {
+  /// Get the current number of active clients.
+  BigInt activeCount();
+
+  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
+  /// Create a new client pool connected to the remote proxy.
+  ///
+  /// * `host` - Remote proxy hostname
+  /// * `port` - Remote proxy port
+  /// * `psk` - Pre-shared key for authentication
+  /// * `pool_size` - Maximum number of concurrent clients
+  static Future<AkariClientPool> newInstance({
+    required String host,
+    required int port,
+    required List<int> psk,
+    required BigInt poolSize,
+  }) => RustLib.instance.api.crateApiAkariClientAkariClientPoolNew(
+    host: host,
+    port: port,
+    psk: psk,
+    poolSize: poolSize,
+  );
+
+  /// Get the pool size (maximum number of concurrent clients).
+  BigInt poolSize();
+
+  /// Send an HTTP GET request and return the response.
+  ///
+  /// This method acquires a client from the pool, sends the request,
+  /// and releases the client back to the pool.
   Future<AkariHttpResponse> sendRequest({
     required String url,
     required AkariRequestConfig config,
