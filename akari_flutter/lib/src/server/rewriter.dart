@@ -5,7 +5,6 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:brotli/brotli.dart';
 
@@ -93,7 +92,8 @@ String rewriteHtmlToProxy(
 
   // Service worker registration and runtime rewrite scripts
   final swPath = config.useEncryption ? '/sw-akari.js?enc=1' : '/sw-akari.js';
-  final registrationSnippet = '''
+  final registrationSnippet =
+      '''
 <script>(function(){
 if('serviceWorker' in navigator){
 navigator.serviceWorker.register('$swPath',{scope:'/'}).catch(()=>{});
@@ -292,23 +292,26 @@ String rewriteJsToProxy(
 /// Convert a URL to a proxied URL.
 String _toProxyUrl(String url, String baseUrl, ProxyRewriterConfig config) {
   if (url.isEmpty) return url;
-  
+
   // Skip data:, javascript:, mailto:, anchors
-  if (RegExp(r'^(?:data:|javascript:|mailto:|#)', caseSensitive: false).hasMatch(url)) {
+  if (RegExp(
+    r'^(?:data:|javascript:|mailto:|#)',
+    caseSensitive: false,
+  ).hasMatch(url)) {
     return url;
   }
-  
+
   // Already proxied - check for both localhost and 127.0.0.1 patterns
   if (url.startsWith(config.proxyBase)) {
     return url;
   }
-  
+
   // Extract port from proxyBase to check for alternative host patterns
   final proxyUri = Uri.parse(config.proxyBase);
   final port = proxyUri.port;
   final localhostPattern = 'http://localhost:$port/';
   final ipPattern = 'http://127.0.0.1:$port/';
-  
+
   if (url.startsWith(localhostPattern) || url.startsWith(ipPattern)) {
     return url;
   }
@@ -352,9 +355,11 @@ String rewriteLocationHeader(
 /// Decompress response body if Content-Encoding is set.
 /// Returns (decompressed body, success flag).
 (List<int>, bool) maybeDecompress(List<int> body, Map<String, String> headers) {
-  final encoding = headers['Content-Encoding']?.toLowerCase() ?? 
-                   headers['content-encoding']?.toLowerCase() ?? '';
-  
+  final encoding =
+      headers['Content-Encoding']?.toLowerCase() ??
+      headers['content-encoding']?.toLowerCase() ??
+      '';
+
   if (encoding.isEmpty) {
     return (body, true);
   }
@@ -415,25 +420,20 @@ void stripSecurityHeaders(Map<String, String> headers) {
 }
 
 /// Content types that should be rewritten.
-enum RewriteContentType {
-  html,
-  css,
-  javascript,
-  none,
-}
+enum RewriteContentType { html, css, javascript, none }
 
 /// Determine if content should be rewritten based on Content-Type.
 RewriteContentType getRewriteContentType(String contentType) {
   final ct = contentType.split(';').first.trim().toLowerCase();
-  
+
   if (ct.startsWith('text/html')) {
     return RewriteContentType.html;
   }
   if (ct == 'text/css') {
     return RewriteContentType.css;
   }
-  if (ct.contains('javascript') || 
-      ct == 'application/javascript' || 
+  if (ct.contains('javascript') ||
+      ct == 'application/javascript' ||
       ct == 'application/x-javascript') {
     return RewriteContentType.javascript;
   }
