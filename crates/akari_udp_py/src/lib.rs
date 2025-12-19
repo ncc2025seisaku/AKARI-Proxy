@@ -1,3 +1,6 @@
+// Suppress PyO3 macro expansion warnings in Rust 1.76+
+#![allow(non_local_definitions)]
+
 use akari_udp_core::{
     decode_packet as decode_packet_core, decode_packet_v3, debug_dump, encode_ack_v2, encode_error, encode_error_v2,
     encode_nack_v2, encode_request, encode_request_v2, encode_resp_body_v3, encode_resp_head_cont_v3,
