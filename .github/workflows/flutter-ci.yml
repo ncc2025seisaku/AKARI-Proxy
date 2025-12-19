@@ -10,6 +10,8 @@ on:
     branches: [develop, main]
     paths:
       - 'akari_flutter/**'
+      - '.github/workflows/flutter-ci.yml'
+  workflow_dispatch:  # 手動実行用
 
 jobs:
   analyze:
