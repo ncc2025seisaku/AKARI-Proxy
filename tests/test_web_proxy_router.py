@@ -14,7 +14,7 @@ class WebRouterEncryptionTest(unittest.TestCase):
             listen_port=8080,
             mode="web",
             ui=UIConfig(portal_title="t", welcome_message="m"),
-            remote=RemoteProxyConfig(host="127.0.0.1", port=9000, psk=b"test-psk-0000-test", timeout=1.0),
+            remote=RemoteProxyConfig(host="127.0.0.1", port=9000, psk=b"test-psk-0000-test", timeout=1.0, use_rust_client=False),
             content_filter=ContentFilterSettings(True, True, True, True),
         )
 
