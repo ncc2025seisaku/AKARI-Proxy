@@ -146,3 +146,38 @@ jobs:
       - name: Build Windows
         working-directory: akari_flutter
         run: flutter build windows --debug
+
+  build-ios:
+    name: Build iOS (No CodeSign)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, x86_64-apple-ios
+
+      - name: Install flutter_rust_bridge_codegen
+        run: cargo install flutter_rust_bridge_codegen --version 2.11.1
+
+      - name: Get Flutter dependencies
+        working-directory: akari_flutter
+        run: flutter pub get
+
+      - name: Run code generation
+        working-directory: akari_flutter
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Build iOS (No Codesign)
+        working-directory: akari_flutter
+        run: flutter build ios --release --no-codesign
+
