@@ -209,6 +209,7 @@ fn wire__crate__api__akari_client__AkariClientPool_send_request_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AkariClientPool>,
             >>::sse_decode(&mut deserializer);
             let api_url = <String>::sse_decode(&mut deserializer);
+            let api_headers = <Vec<(String, String)>>::sse_decode(&mut deserializer);
             let api_config =
                 <crate::api::akari_client::AkariRequestConfig>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -231,6 +232,7 @@ fn wire__crate__api__akari_client__AkariClientPool_send_request_impl(
                     let output_ok = crate::api::akari_client::AkariClientPool::send_request(
                         &*api_that_guard,
                         api_url,
+                        api_headers,
                         api_config,
                     )?;
                     Ok(output_ok)
@@ -266,6 +268,7 @@ fn wire__crate__api__akari_client__AkariClientPool_send_request_with_method_impl
             >>::sse_decode(&mut deserializer);
             let api_url = <String>::sse_decode(&mut deserializer);
             let api_method = <String>::sse_decode(&mut deserializer);
+            let api_headers = <Vec<(String, String)>>::sse_decode(&mut deserializer);
             let api_config =
                 <crate::api::akari_client::AkariRequestConfig>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -290,6 +293,7 @@ fn wire__crate__api__akari_client__AkariClientPool_send_request_with_method_impl
                             &*api_that_guard,
                             api_url,
                             api_method,
+                            api_headers,
                             api_config,
                         )?;
                     Ok(output_ok)
@@ -360,6 +364,7 @@ fn wire__crate__api__akari_client__AkariClient_send_request_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AkariClient>,
             >>::sse_decode(&mut deserializer);
             let api_url = <String>::sse_decode(&mut deserializer);
+            let api_headers = <Vec<(String, String)>>::sse_decode(&mut deserializer);
             let api_config =
                 <crate::api::akari_client::AkariRequestConfig>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -382,6 +387,7 @@ fn wire__crate__api__akari_client__AkariClient_send_request_impl(
                     let output_ok = crate::api::akari_client::AkariClient::send_request(
                         &*api_that_guard,
                         api_url,
+                        api_headers,
                         api_config,
                     )?;
                     Ok(output_ok)
@@ -417,6 +423,7 @@ fn wire__crate__api__akari_client__AkariClient_send_request_with_method_impl(
             >>::sse_decode(&mut deserializer);
             let api_url = <String>::sse_decode(&mut deserializer);
             let api_method = <String>::sse_decode(&mut deserializer);
+            let api_headers = <Vec<(String, String)>>::sse_decode(&mut deserializer);
             let api_config =
                 <crate::api::akari_client::AkariRequestConfig>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -441,6 +448,7 @@ fn wire__crate__api__akari_client__AkariClient_send_request_with_method_impl(
                             &*api_that_guard,
                             api_url,
                             api_method,
+                            api_headers,
                             api_config,
                         )?;
                     Ok(output_ok)
