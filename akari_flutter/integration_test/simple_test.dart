@@ -17,7 +17,6 @@ void main() {
       enableCss: true,
       enableImg: true,
       enableOther: true,
-      useSystemProxy: false,
     );
     await tester.pumpWidget(AkariProxyApp(initialSettings: testSettings));
     expect(find.text('AKARI Proxy'), findsOneWidget);

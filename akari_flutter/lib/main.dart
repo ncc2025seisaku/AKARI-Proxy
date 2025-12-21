@@ -11,7 +11,6 @@ import 'package:akari_flutter/src/rust/frb_generated.dart';
 import 'package:akari_flutter/src/server/local_server.dart';
 import 'package:akari_flutter/src/server/monitoring_view.dart';
 import 'package:akari_flutter/src/services/settings_service.dart';
-import 'package:akari_flutter/src/services/system_proxy_service.dart';
 
 /// Global settings service
 final SettingsService _settingsService = SettingsService();
@@ -68,9 +67,6 @@ class ProxyManager extends ChangeNotifier {
     if (_isRunning) return;
 
     await _startServer();
-    if (_settings.useSystemProxy) {
-      await WindowsSystemProxy.enable('127.0.0.1:8080');
-    }
     _startWatchdog();
     _isRunning = true;
     notifyListeners();
@@ -78,9 +74,6 @@ class ProxyManager extends ChangeNotifier {
 
   Future<void> stop() async {
     _watchdogTimer?.cancel();
-    if (_settings.useSystemProxy) {
-      await WindowsSystemProxy.disable();
-    }
     _isRunning = false;
     await _server?.stop();
     _server = null;
@@ -92,15 +85,6 @@ class ProxyManager extends ChangeNotifier {
     _settings = newSettings;
 
     if (_isRunning) {
-      // If system proxy setting changed, apply it immediately
-      if (oldSettings.useSystemProxy != newSettings.useSystemProxy) {
-        if (newSettings.useSystemProxy) {
-          await WindowsSystemProxy.enable('127.0.0.1:8080');
-        } else {
-          await WindowsSystemProxy.disable();
-        }
-      }
-
       // If core proxy settings changed, restart server
       if (oldSettings.remoteHost != newSettings.remoteHost ||
           oldSettings.remotePort != newSettings.remotePort ||
@@ -538,9 +522,6 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
         case 'useEncryption':
           _settings = _settings.copyWith(useEncryption: value);
           break;
-        case 'useSystemProxy':
-          _settings = _settings.copyWith(useSystemProxy: value);
-          break;
       }
     });
 
@@ -840,14 +821,6 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     accentColor: const Color(0xFF4FC3F7),
                   ),
                   const SizedBox(height: 8),
-                  if (Platform.isWindows)
-                    _buildToggleSwitch(
-                      label: 'システムプロキシ',
-                      description: 'OS のプロキシ設定を自動更新',
-                      value: _settings.useSystemProxy,
-                      onChanged: (v) => _toggleFilter('useSystemProxy', v),
-                      accentColor: const Color(0xFFA5D6A7),
-                    ),
                 ],
               ),
             ),

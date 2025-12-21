@@ -18,7 +18,6 @@ void main() {
     enableCss: true,
     enableImg: true,
     enableOther: true,
-    useSystemProxy: false,
   );
 
   group('Navigation Tests', () {
