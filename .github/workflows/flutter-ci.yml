@@ -97,9 +97,10 @@ jobs:
         working-directory: akari_flutter/rust
         run: cargo check --all-targets
 
-      - name: Dart compile check
-        working-directory: akari_flutter
-        run: dart compile kernel lib/main.dart -o /tmp/main.dill
+      # 注: Dart compile check は削除
+      # 理由: dart compile kernel は純粋Dart環境で実行され、dart:ui が利用できない
+      # Flutter依存パッケージ（webview_windows等）がコンパイルエラーを起こすため
+      # flutter analyze ですでにDartコードの静的解析は実施済み
 
   # 注: フルビルドは release workflow (android-release.yml, windows-release.yml, ios-release.yml) で実行
   # PRマージ時の CI では軽量チェックのみ実行し、リリース時にフルビルドを行う
