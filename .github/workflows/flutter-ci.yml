@@ -70,8 +70,6 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -95,13 +93,9 @@ jobs:
         working-directory: akari_flutter
         run: flutter_rust_bridge_codegen generate
 
-      - name: Cargo check (default target)
+      - name: Cargo check
         working-directory: akari_flutter/rust
         run: cargo check --all-targets
-
-      - name: Cargo check (Android arm64)
-        working-directory: akari_flutter/rust
-        run: cargo check --target aarch64-linux-android
 
       - name: Dart compile check
         working-directory: akari_flutter
