@@ -19,7 +19,6 @@ void main() {
         enableCss: true,
         enableImg: true,
         enableOther: true,
-        useSystemProxy: false,
       );
 
       expect(settings.remoteHost, equals('127.0.0.1'));
@@ -39,7 +38,6 @@ void main() {
         enableCss: true,
         enableImg: true,
         enableOther: true,
-        useSystemProxy: false,
       );
 
       final updatedSettings = settings.copyWith(
@@ -64,7 +62,6 @@ void main() {
         enableCss: true,
         enableImg: true,
         enableOther: true,
-        useSystemProxy: false,
       );
 
       expect(settings.pskAsString, equals('test'));
