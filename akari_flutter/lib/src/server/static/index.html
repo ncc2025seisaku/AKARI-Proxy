@@ -1,246 +1,270 @@
 <!DOCTYPE html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Akari Web Proxy</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --text: #f6f2ea;
-        --muted: rgba(246, 242, 234, 0.65);
-        --accent: #f3c45c;
-        font-family: "Inter", "SF Pro Display", "Yu Gothic", system-ui, sans-serif;
-      }
 
-      * {
-        box-sizing: border-box;
-      }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Akari Web Proxy</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --text: #f6f2ea;
+      --muted: rgba(246, 242, 234, 0.65);
+      --accent: #f3c45c;
+      font-family: "Inter", "SF Pro Display", "Yu Gothic", system-ui, sans-serif;
+    }
 
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      text-rendering: optimizeLegibility;
+      padding: 2rem;
+      overflow: hidden;
+      transition: background 0.25s ease;
+      background-attachment: fixed;
+      background: #0a0a0a;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("logo.png");
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: min(100vw, 100vh);
+      opacity: 0.3;
+      filter: blur(1.5px) brightness(1.25);
+      mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0) 72%);
+      mask-mode: alpha;
+      transform: translateY(-2%);
+      pointer-events: none;
+      transition: filter 0.25s ease, opacity 0.25s ease;
+      z-index: -2;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at center, rgba(10, 10, 10, 0) 40%, rgba(10, 10, 10, 0.35) 70%, rgba(10, 10, 10, 0.75) 90%, rgba(10, 10, 10, 0.95) 95%, rgba(10, 10, 10, 0) 100%),
+        radial-gradient(circle, rgba(10, 10, 10, 0.15), rgba(10, 10, 10, 0));
+      mix-blend-mode: soft-light;
+      z-index: -1;
+    }
+
+    body.focused::before {
+      opacity: 0.12;
+      filter: blur(8px);
+    }
+
+    main {
+      position: relative;
+      width: min(520px, 100%);
+      max-width: 520px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.3rem;
+    }
+
+    .liquid-glass {
+      width: min(460px, 90vw);
+      border-radius: 56px;
+      position: relative;
+      isolation: isolate;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 1.15rem;
+      border: none;
+      background: none;
+      padding: 2.25rem 2.5rem 1.75rem;
+      margin: 0 auto;
+      text-decoration: none;
+    }
+
+    .input-area {
+      width: 100%;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      position: relative;
+      padding: 0.9rem 1rem;
+      border-radius: 26px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .input-area canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .input-area>input,
+    .input-area>button {
+      position: relative;
+      z-index: 1;
+    }
+
+    .input-area input {
+      flex: 1;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.3);
+      box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      font-size: 1.1rem;
+      font-weight: 500;
+      padding: 0.35rem 0.5rem;
+      line-height: 1.6;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+
+    .input-area input::placeholder {
+      color: rgba(246, 242, 234, 0.75);
+    }
+
+    .input-area input:focus-visible {
+      border-color: rgba(243, 196, 92, 0.9);
+      box-shadow: 0 0 0 2px rgba(243, 196, 92, 0.3);
+      background: rgba(0, 0, 0, 0.4);
+      outline: none;
+    }
+
+    .input-area button {
+      border: none;
+      border-radius: 14px;
+      padding: 0.65rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.05rem;
+      background: linear-gradient(135deg, rgba(255, 216, 137, 0.95), rgba(191, 141, 41, 0.9));
+      color: #08060a;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 10px 24px rgba(223, 140, 41, 0.45);
+    }
+
+    .input-area button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 26px rgba(223, 140, 41, 0.55);
+    }
+
+    .input-area button:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(255, 209, 106, 0.45), 0 16px 26px rgba(223, 140, 41, 0.4);
+    }
+
+    .input-area button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .input-area button.loading {
+      position: relative;
+      color: transparent;
+    }
+
+    .input-area button.loading::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      top: 50%;
+      left: 50%;
+      margin-top: -8px;
+      margin-left: -8px;
+      border: 2px solid rgba(8, 6, 10, 0.3);
+      border-top-color: #08060a;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    body.focused .input-area {
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+
+    #sourceImage {
+      display: none;
+    }
+
+    .hint-text {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+
+    @media (max-width: 520px) {
       body {
-        min-height: 100vh;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--text);
-        text-rendering: optimizeLegibility;
-        padding: 2rem;
-        overflow: hidden;
-        transition: background 0.25s ease;
-        background-attachment: fixed;
-        background: #0a0a0a;
-      }
-
-      body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        background-image: url("logo.png");
-        background-position: center;
-        background-repeat: no-repeat;
-        background-size: min(100vw, 100vh);
-        opacity: 0.3;
-        filter: blur(1.5px) brightness(1.25);
-        mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0) 72%);
-        mask-mode: alpha;
-        transform: translateY(-2%);
-        pointer-events: none;
-        transition: filter 0.25s ease, opacity 0.25s ease;
-        z-index: -2;
-      }
-
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(circle at center, rgba(10, 10, 10, 0) 40%, rgba(10, 10, 10, 0.35) 70%, rgba(10, 10, 10, 0.75) 90%, rgba(10, 10, 10, 0.95) 95%, rgba(10, 10, 10, 0) 100%),
-          radial-gradient(circle, rgba(10, 10, 10, 0.15), rgba(10, 10, 10, 0));
-        mix-blend-mode: soft-light;
-        z-index: -1;
-      }
-
-      body.focused::before {
-        opacity: 0.12;
-        filter: blur(8px);
-      }
-
-      main {
-        position: relative;
-        width: min(520px, 100%);
-        max-width: 520px;
-        text-align: center;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1.3rem;
+        padding: 1.2rem;
       }
 
       .liquid-glass {
-        width: min(460px, 90vw);
-        border-radius: 56px;
-        position: relative;
-        isolation: isolate;
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 1.15rem;
-        border: none;
-        background: none;
-        padding: 2.25rem 2.5rem 1.75rem;
-        margin: 0 auto;
-        text-decoration: none;
+        padding: 1.6rem 1.4rem 1.2rem;
       }
 
       .input-area {
-        width: 100%;
-        display: flex;
-        gap: 0.75rem;
-        align-items: center;
-        position: relative;
-        padding: 0.9rem 1rem;
-        border-radius: 26px;
-        border: 1px solid rgba(255, 255, 255, 0.35);
-        overflow: hidden;
-        isolation: isolate;
-      }
-
-      .input-area canvas {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        z-index: 0;
-        pointer-events: none;
-      }
-
-      .input-area > input,
-      .input-area > button {
-        position: relative;
-        z-index: 1;
-      }
-
-      .input-area input {
-        flex: 1;
-        border: 1px solid transparent;
-        border-radius: 14px;
-        background: rgba(0, 0, 0, 0.3);
-        box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.3);
-        color: var(--text);
-        font-size: 1.1rem;
-        font-weight: 500;
-        padding: 0.35rem 0.5rem;
-        line-height: 1.6;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-      }
-
-      .input-area input::placeholder {
-        color: rgba(246, 242, 234, 0.75);
-      }
-
-      .input-area input:focus-visible {
-        border-color: rgba(243, 196, 92, 0.9);
-        box-shadow: 0 0 0 2px rgba(243, 196, 92, 0.3);
-        background: rgba(0, 0, 0, 0.4);
-        outline: none;
+        flex-direction: column;
+        gap: 0.65rem;
       }
 
       .input-area button {
-        border: none;
-        border-radius: 14px;
-        padding: 0.65rem 1.4rem;
-        font-size: 0.95rem;
-        font-weight: 600;
-        letter-spacing: 0.05rem;
-        background: linear-gradient(135deg, rgba(255, 216, 137, 0.95), rgba(191, 141, 41, 0.9));
-        color: #08060a;
-        cursor: pointer;
-        transition: transform 0.18s ease, box-shadow 0.18s ease;
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 10px 24px rgba(223, 140, 41, 0.45);
+        width: 100%;
+        padding: 0.55rem 0;
       }
+    }
+  </style>
+</head>
 
-      .input-area button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 16px 26px rgba(223, 140, 41, 0.55);
-      }
-
-      .input-area button:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(255, 209, 106, 0.45), 0 16px 26px rgba(223, 140, 41, 0.4);
-      }
-
-      body.focused .input-area {
-        border-color: rgba(255, 255, 255, 0.6);
-      }
-
-      .sr-only {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        border: 0;
-      }
-
-      #sourceImage {
-        display: none;
-      }
-
-      .hint-text {
-        color: var(--muted);
-        font-size: 0.85rem;
-        margin-top: 0.5rem;
-      }
-
-      @media (max-width: 520px) {
-        body {
-          padding: 1.2rem;
-        }
-
-        .liquid-glass {
-          padding: 1.6rem 1.4rem 1.2rem;
-        }
-
-        .input-area {
-          flex-direction: column;
-          gap: 0.65rem;
-        }
-
-        .input-area button {
-          width: 100%;
-          padding: 0.55rem 0;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <div id="searchPanel" class="liquid-glass">
-        <label class="sr-only" for="query"></label>
-        <div class="input-area">
-          <canvas id="glassCanvas"></canvas>
-          <input
-            id="query"
-            name="query"
-            type="text"
-            placeholder="URLを入力..."
-            autocomplete="off"
-          />
-          <button id="submitSearch" type="button">OPEN</button>
-        </div>
-        <p class="hint-text">設定は右上の ⚙ ボタンから変更できます</p>
+<body>
+  <main>
+    <div id="searchPanel" class="liquid-glass">
+      <label class="sr-only" for="query"></label>
+      <div class="input-area">
+        <canvas id="glassCanvas"></canvas>
+        <input id="query" name="query" type="text" placeholder="URLを入力..." autocomplete="off" />
+        <button id="submitSearch" type="button">アクセス</button>
       </div>
-    </main>
-    <img
-      id="sourceImage"
-      style="display: none;"
-      alt=""
-    />
-    <script id="fragShader" type="x-shader/x-fragment">
+      <p class="hint-text">Enterキーでアクセス · 設定は右上の ⚙ ボタン</p>
+    </div>
+  </main>
+  <img id="sourceImage" style="display: none;" alt="" />
+  <script id="fragShader" type="x-shader/x-fragment">
       precision mediump float;
 
       uniform vec3 iResolution;
@@ -287,211 +311,224 @@
         mainImage(gl_FragColor, gl_FragCoord.xy);
       }
     </script>
-    <script>
-      const queryInput = document.getElementById("query");
-      const searchButton = document.getElementById("submitSearch");
-      const canvas = document.getElementById("glassCanvas");
-      const inputArea = document.querySelector(".input-area");
-      const img = document.getElementById("sourceImage");
-      const gl = canvas.getContext("webgl");
+  <script>
+    const queryInput = document.getElementById("query");
+    const searchButton = document.getElementById("submitSearch");
+    const canvas = document.getElementById("glassCanvas");
+    const inputArea = document.querySelector(".input-area");
+    const img = document.getElementById("sourceImage");
+    const gl = canvas.getContext("webgl");
 
-      const updateFocusState = () => {
-        const active = document.activeElement === queryInput || queryInput.value.trim().length > 0;
-        document.body.classList.toggle("focused", active);
-      };
+    const updateFocusState = () => {
+      const active = document.activeElement === queryInput || queryInput.value.trim().length > 0;
+      document.body.classList.toggle("focused", active);
+    };
 
-      queryInput.addEventListener("focus", updateFocusState);
-      queryInput.addEventListener("blur", updateFocusState);
-      queryInput.addEventListener("input", updateFocusState);
-      updateFocusState();
+    queryInput.addEventListener("focus", updateFocusState);
+    queryInput.addEventListener("blur", updateFocusState);
+    queryInput.addEventListener("input", updateFocusState);
+    updateFocusState();
 
-      const normalizeUrl = (text) => {
-        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text)) {
-          return text;
-        }
-        if (text.includes(".")) {
-          return `https://${text}`;
-        }
+    const normalizeUrl = (text) => {
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(text)) {
         return text;
+      }
+      if (text.includes(".")) {
+        return `https://${text}`;
+      }
+      return text;
+    };
+
+    const openProxy = () => {
+      const text = queryInput.value.trim();
+      if (!text) {
+        queryInput.focus();
+        return;
+      }
+      const normalized = normalizeUrl(text);
+      const params = new URLSearchParams();
+      params.set("entry", "1");
+      // ローディング状態を表示
+      searchButton.classList.add('loading');
+      searchButton.disabled = true;
+      queryInput.disabled = true;
+
+      // ページ遷移失敗時のフォールバック（5秒後に復元）
+      setTimeout(() => {
+        searchButton.classList.remove('loading');
+        searchButton.disabled = false;
+        queryInput.disabled = false;
+      }, 5000);
+
+      window.location.href = `/${encodeURIComponent(normalized)}?${params.toString()}`;
+    };
+
+    searchButton.addEventListener("click", openProxy);
+    queryInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        openProxy();
+      }
+    });
+
+    // WebGL Setup
+    const captureBackground = () => {
+      const rect = inputArea.getBoundingClientRect();
+      const tempCanvas = document.createElement('canvas');
+      const ctx = tempCanvas.getContext('2d');
+
+      tempCanvas.width = rect.width;
+      tempCanvas.height = rect.height;
+
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+      const logoImg = new Image();
+      logoImg.src = 'logo.png';
+      logoImg.onload = () => {
+        ctx.globalAlpha = 0.24;
+        ctx.filter = 'blur(1.5px)';
+        const logoSize = Math.min(rect.width, rect.height) * 0.8;
+        ctx.drawImage(
+          logoImg,
+          (rect.width - logoSize) / 2,
+          (rect.height - logoSize) / 2 - rect.height * 0.02,
+          logoSize,
+          logoSize
+        );
+        img.src = tempCanvas.toDataURL();
       };
 
-      const openProxy = () => {
-        const text = queryInput.value.trim();
-        if (!text) {
-          queryInput.focus();
-          return;
-        }
-        const normalized = normalizeUrl(text);
-        const params = new URLSearchParams();
-        params.set("entry", "1");
-        window.location.href = `/${encodeURIComponent(normalized)}?${params.toString()}`;
+      logoImg.onerror = () => {
+        img.src = tempCanvas.toDataURL();
       };
 
-      searchButton.addEventListener("click", openProxy);
-      queryInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          openProxy();
-        }
-      });
+      return tempCanvas;
+    };
 
-      // WebGL Setup
-      const captureBackground = () => {
-        const rect = inputArea.getBoundingClientRect();
-        const tempCanvas = document.createElement('canvas');
-        const ctx = tempCanvas.getContext('2d');
-        
-        tempCanvas.width = rect.width;
-        tempCanvas.height = rect.height;
-        
-        ctx.fillStyle = '#0a0a0a';
-        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        const logoImg = new Image();
-        logoImg.src = 'logo.png';
-        logoImg.onload = () => {
-          ctx.globalAlpha = 0.24;
-          ctx.filter = 'blur(1.5px)';
-          const logoSize = Math.min(rect.width, rect.height) * 0.8;
-          ctx.drawImage(
-            logoImg,
-            (rect.width - logoSize) / 2,
-            (rect.height - logoSize) / 2 - rect.height * 0.02,
-            logoSize,
-            logoSize
-          );
-          img.src = tempCanvas.toDataURL();
-        };
-        
-        logoImg.onerror = () => {
-          img.src = tempCanvas.toDataURL();
-        };
-        
-        return tempCanvas;
-      };
+    const setCanvasSize = () => {
+      const rect = inputArea.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width));
+      const height = Math.max(1, Math.floor(rect.height));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
 
-      const setCanvasSize = () => {
-        const rect = inputArea.getBoundingClientRect();
-        const width = Math.max(1, Math.floor(rect.width));
-        const height = Math.max(1, Math.floor(rect.height));
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width;
-          canvas.height = height;
-          
-          const bgCanvas = captureBackground();
-          img.src = bgCanvas.toDataURL();
-        }
-      };
+        const bgCanvas = captureBackground();
+        img.src = bgCanvas.toDataURL();
+      }
+    };
 
-      const adjustLayout = () => {
-        setCanvasSize();
-      };
+    const adjustLayout = () => {
+      setCanvasSize();
+    };
 
-      adjustLayout();
-      window.addEventListener("resize", adjustLayout);
+    adjustLayout();
+    window.addEventListener("resize", adjustLayout);
 
-      if (!gl) {
-        console.error("WebGL がサポートされていません。");
-      } else {
-        const vsSource = `
+    if (!gl) {
+      console.error("WebGL がサポートされていません。");
+    } else {
+      const vsSource = `
           attribute vec2 position;
           void main() {
             gl_Position = vec4(position, 0.0, 1.0);
           }
         `;
-        const fsSource = document.getElementById("fragShader").textContent;
+      const fsSource = document.getElementById("fragShader").textContent;
 
-        const createShader = (type, source) => {
-          const shader = gl.createShader(type);
-          gl.shaderSource(shader, source);
-          gl.compileShader(shader);
+      const createShader = (type, source) => {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
 
-          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            console.error("Shader error:", gl.getShaderInfoLog(shader));
-            gl.deleteShader(shader);
-            return null;
-          }
-          return shader;
-        };
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error("Shader error:", gl.getShaderInfoLog(shader));
+          gl.deleteShader(shader);
+          return null;
+        }
+        return shader;
+      };
 
-        const vs = createShader(gl.VERTEX_SHADER, vsSource);
-        const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
-        const program = gl.createProgram();
+      const vs = createShader(gl.VERTEX_SHADER, vsSource);
+      const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+      const program = gl.createProgram();
 
-        gl.attachShader(program, vs);
-        gl.attachShader(program, fs);
-        gl.linkProgram(program);
-        gl.useProgram(program);
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      gl.useProgram(program);
 
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.bufferData(
-          gl.ARRAY_BUFFER,
-          new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-          gl.STATIC_DRAW
-        );
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+        gl.STATIC_DRAW
+      );
 
-        const position = gl.getAttribLocation(program, "position");
-        gl.enableVertexAttribArray(position);
-        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+      const position = gl.getAttribLocation(program, "position");
+      gl.enableVertexAttribArray(position);
+      gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
-        const uniforms = {
-          resolution: gl.getUniformLocation(program, "iResolution"),
-          time: gl.getUniformLocation(program, "iTime"),
-          texture: gl.getUniformLocation(program, "iChannel0"),
-        };
+      const uniforms = {
+        resolution: gl.getUniformLocation(program, "iResolution"),
+        time: gl.getUniformLocation(program, "iTime"),
+        texture: gl.getUniformLocation(program, "iChannel0"),
+      };
 
-        const texture = gl.createTexture();
-        
-        let textureReady = false;
-        const setupTexture = () => {
-          if (img.src && img.complete) {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texImage2D(
-              gl.TEXTURE_2D,
-              0,
-              gl.RGBA,
-              gl.RGBA,
-              gl.UNSIGNED_BYTE,
-              img
-            );
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            textureReady = true;
-          }
-        };
+      const texture = gl.createTexture();
 
-        img.onload = setupTexture;
-        
-        const bgCanvas = captureBackground();
-        img.src = bgCanvas.toDataURL();
-
-        const startTime = performance.now();
-        const render = () => {
-          if (!textureReady) {
-            requestAnimationFrame(render);
-            return;
-          }
-          
-          const currentTime = (performance.now() - startTime) / 1000;
-
-          gl.viewport(0, 0, canvas.width, canvas.height);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-
-          gl.uniform3f(uniforms.resolution, canvas.width, canvas.height, 1.0);
-          gl.uniform1f(uniforms.time, currentTime);
-
-          gl.activeTexture(gl.TEXTURE0);
+      let textureReady = false;
+      const setupTexture = () => {
+        if (img.src && img.complete) {
           gl.bindTexture(gl.TEXTURE_2D, texture);
-          gl.uniform1i(uniforms.texture, 0);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            img
+          );
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          textureReady = true;
+        }
+      };
 
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      img.onload = setupTexture;
+
+      const bgCanvas = captureBackground();
+      img.src = bgCanvas.toDataURL();
+
+      const startTime = performance.now();
+      const render = () => {
+        if (!textureReady) {
           requestAnimationFrame(render);
-        };
+          return;
+        }
 
-        render();
-      }
-    </script>
-  </body>
+        const currentTime = (performance.now() - startTime) / 1000;
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.uniform3f(uniforms.resolution, canvas.width, canvas.height, 1.0);
+        gl.uniform1f(uniforms.time, currentTime);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(uniforms.texture, 0);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        requestAnimationFrame(render);
+      };
+
+      render();
+    }
+  </script>
+</body>
+
 </html>
