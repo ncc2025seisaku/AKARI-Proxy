@@ -229,6 +229,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   late TextEditingController _remotePortController;
   late TextEditingController _pskController;
   bool _isReconnecting = false;
+  bool _pskObscured = true;
 
   @override
   void initState() {
@@ -506,6 +507,69 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     }
   }
 
+  /// Test connection to the proxy server without saving settings.
+  Future<void> _testConnection() async {
+    final host = _remoteHostController.text.trim();
+    final port = int.tryParse(_remotePortController.text.trim()) ?? 9000;
+
+    if (host.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('リモートホストを入力してください'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isReconnecting = true;
+    });
+
+    try {
+      // Try to establish a simple connection to the host
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
+      await socket.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✓ $host:$port への接続に成功しました'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } on SocketException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✗ 接続失敗: ${e.message}'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✗ 接続エラー: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isReconnecting = false;
+        });
+      }
+    }
+  }
+
   /// Toggle a filter setting and save.
   void _toggleFilter(String key, bool value) {
     setState(() {
@@ -676,12 +740,64 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     keyboardType: TextInputType.number,
                   ),
                   const SizedBox(height: 12),
-                  // PSK input
-                  _buildInputField(
-                    controller: _pskController,
-                    label: 'PSK (事前共有鍵)',
-                    hint: 'test-psk-0000-test',
-                    icon: Icons.key,
+                  // PSK input with visibility toggle
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'PSK (事前共有鍵)',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.15),
+                          ),
+                        ),
+                        child: TextField(
+                          controller: _pskController,
+                          obscureText: _pskObscured,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'test-psk-0000-test',
+                            hintStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            prefixIcon: Icon(
+                              Icons.key,
+                              color: Colors.white.withOpacity(0.5),
+                              size: 20,
+                            ),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _pskObscured
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                                color: Colors.white.withOpacity(0.5),
+                                size: 20,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _pskObscured = !_pskObscured;
+                                });
+                              },
+                              tooltip: _pskObscured ? 'パスワードを表示' : 'パスワードを隠す',
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   // Connection status
@@ -729,36 +845,59 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // Save button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isReconnecting ? null : _saveAndReconnect,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF3C45C),
-                        foregroundColor: const Color(0xFF0A0A0A),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  // Action buttons row
+                  Row(
+                    children: [
+                      // Test connection button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _isReconnecting ? null : _testConnection,
+                          icon: const Icon(Icons.cable, size: 18),
+                          label: const Text('接続テスト'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: BorderSide(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
                       ),
-                      child: _isReconnecting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF0A0A0A),
-                              ),
-                            )
-                          : const Text(
-                              '保存して再接続',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
+                      const SizedBox(width: 12),
+                      // Save button
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _isReconnecting ? null : _saveAndReconnect,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF3C45C),
+                            foregroundColor: const Color(0xFF0A0A0A),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                    ),
+                          ),
+                          child: _isReconnecting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF0A0A0A),
+                                  ),
+                                )
+                              : const Text(
+                                  '保存',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 28),
                   // Divider
