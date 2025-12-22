@@ -219,6 +219,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   bool _isWebViewReady = false;
   String _currentUrl = '';
   bool _isLoading = false;
+  double _loadingProgress = 0.0;
   bool _settingsOpen = false;
   bool _monitoringOpen = false;
 
@@ -297,7 +298,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
       ..setNavigationDelegate(
         wf.NavigationDelegate(
           onProgress: (int progress) {
-            // Update loading bar.
+            setState(() {
+              _loadingProgress = progress / 100.0;
+            });
           },
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
@@ -984,13 +987,13 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                         icon: const Icon(Icons.arrow_back, size: 20),
                         color: Colors.white70,
                         onPressed: _goBack,
-                        tooltip: '戻る',
+                        tooltip: '戻る (Alt+←)',
                       ),
                       IconButton(
                         icon: const Icon(Icons.arrow_forward, size: 20),
                         color: Colors.white70,
                         onPressed: _goForward,
-                        tooltip: '進む',
+                        tooltip: '進む (Alt+→)',
                       ),
                       IconButton(
                         icon: Icon(
@@ -999,7 +1002,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                         ),
                         color: Colors.white70,
                         onPressed: _reload,
-                        tooltip: _isLoading ? '中止' : '再読み込み',
+                        tooltip: _isLoading ? '中止 (Esc)' : '再読み込み (F5)',
                       ),
                       IconButton(
                         icon: const Icon(Icons.home, size: 20),
@@ -1026,7 +1029,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                               fontSize: 14,
                             ),
                             decoration: InputDecoration(
-                              hintText: 'URL を入力...',
+                              hintText: 'https://example.com',
                               hintStyle: TextStyle(
                                 color: Colors.white.withOpacity(0.5),
                                 fontSize: 14,
@@ -1041,6 +1044,34 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                                 _navigateToUrl();
                               }
                             },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Connection status indicator
+                      Tooltip(
+                        message: _proxyManager?.isRunning == true
+                            ? 'プロキシ接続中'
+                            : 'プロキシ未接続',
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _proxyManager?.isRunning == true
+                                ? Colors.green
+                                : Colors.red,
+                            boxShadow: [
+                              BoxShadow(
+                                color:
+                                    (_proxyManager?.isRunning == true
+                                            ? Colors.green
+                                            : Colors.red)
+                                        .withOpacity(0.5),
+                                blurRadius: 4,
+                                spreadRadius: 1,
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -1077,6 +1108,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
               // Loading indicator
               if (_isLoading)
                 LinearProgressIndicator(
+                  value: Platform.isAndroid ? _loadingProgress : null,
                   backgroundColor: Colors.transparent,
                   valueColor: const AlwaysStoppedAnimation<Color>(
                     Color(0xFFF3C45C),
