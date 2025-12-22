@@ -12,8 +12,6 @@ use std::convert::TryInto;
 const REQUEST_OVERHEAD: usize = 1 + 2 + 2;
 /// Offset where URL starts in request payload
 const REQUEST_PAYLOAD_OFFSET: usize = 5;
-/// Minimum length for RespHead payload: status_code(2) + body_len(at least 3)
-const RESP_HEAD_MIN_LEN: usize = 4;
 /// Minimum length for RespHeadCont payload: hdr_chunks(1) + hdr_idx(1)
 const RESP_HEAD_CONT_MIN_LEN: usize = 2;
 /// Minimum length for Error payload: code(1) + http_status(2)
