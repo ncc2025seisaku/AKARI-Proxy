@@ -119,8 +119,12 @@ fn decode_request(payload: &[u8]) -> Result<PayloadV3, AkariError> {
         return Err(AkariError::MissingPayload);
     }
     let method = parse_method(payload[0])?;
-    let url_len = u16::from_be_bytes(payload[1..3].try_into().unwrap()) as usize;
-    let hdr_len = u16::from_be_bytes(payload[3..5].try_into().unwrap()) as usize;
+    let url_len = u16::from_be_bytes(
+        payload[1..3].try_into().expect("length checked")
+    ) as usize;
+    let hdr_len = u16::from_be_bytes(
+        payload[3..5].try_into().expect("length checked")
+    ) as usize;
     if payload.len() != REQUEST_OVERHEAD + url_len + hdr_len {
         return Err(AkariError::InvalidUrlLength {
             declared: url_len,
@@ -136,13 +140,17 @@ fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, Akar
     if payload.len() < RESP_HEAD_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
-    let status_code = u16::from_be_bytes(payload[0..2].try_into().unwrap());
+    let status_code = u16::from_be_bytes(
+        payload[0..2].try_into().expect("length checked")
+    );
     let (body_len, offset_len) = if header.flags & crate::header_v3::FLAG_SHORT_LEN != 0 {
         let mut buf = [0u8; 4];
         buf[1..].copy_from_slice(&payload[2..RESP_HEAD_OFFSET_SHORT]); // 3 bytes
         (u32::from_be_bytes(buf), RESP_HEAD_OFFSET_SHORT)
     } else {
-        (u32::from_be_bytes(payload[2..RESP_HEAD_OFFSET_FULL].try_into().unwrap()), RESP_HEAD_OFFSET_FULL)
+        (u32::from_be_bytes(
+            payload[2..RESP_HEAD_OFFSET_FULL].try_into().expect("length checked")
+        ), RESP_HEAD_OFFSET_FULL)
     };
     if payload.len() < offset_len + 2 {
         return Err(AkariError::MissingPayload);
@@ -218,7 +226,9 @@ fn decode_error(payload: &[u8]) -> Result<PayloadV3, AkariError> {
         return Err(AkariError::MissingPayload);
     }
     let code = payload[0];
-    let http_status = u16::from_be_bytes(payload[1..3].try_into().unwrap());
+    let http_status = u16::from_be_bytes(
+        payload[1..3].try_into().expect("length checked")
+    );
     let message = std::str::from_utf8(&payload[3..]).map(|s| s.to_string())?;
     Ok(PayloadV3::Error(ErrorPayload {
         error_code: code,

@@ -42,7 +42,9 @@ pub fn encrypt_payload(psk: &[u8], header: &Header, plaintext: &[u8]) -> Result<
         return Err(AkariError::AeadFailed);
     }
     let tag_start = ciphertext_with_tag.len() - AEAD_TAG_LEN;
-    let tag: [u8; AEAD_TAG_LEN] = ciphertext_with_tag[tag_start..].try_into().unwrap();
+    let tag: [u8; AEAD_TAG_LEN] = ciphertext_with_tag[tag_start..]
+        .try_into()
+        .expect("length verified by prior check");
     ciphertext_with_tag.truncate(tag_start);
     Ok((ciphertext_with_tag, tag))
 }
@@ -81,7 +83,9 @@ pub fn encrypt_payload_v3(
         return Err(AkariError::AeadFailed);
     }
     let tag_start = ciphertext_with_tag.len() - AEAD_TAG_LEN;
-    let tag: [u8; AEAD_TAG_LEN] = ciphertext_with_tag[tag_start..].try_into().unwrap();
+    let tag: [u8; AEAD_TAG_LEN] = ciphertext_with_tag[tag_start..]
+        .try_into()
+        .expect("length verified by prior check");
     ciphertext_with_tag.truncate(tag_start);
     Ok((ciphertext_with_tag, tag))
 }
