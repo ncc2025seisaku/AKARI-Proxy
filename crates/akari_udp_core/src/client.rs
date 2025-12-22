@@ -624,9 +624,16 @@ impl AkariClient {
                 if received_tag.as_slice() != expected_tag {
                     return Err(ClientError::AggTagMismatch);
                 }
-            } else if accumulator.body_seq_total.map(|t| t > 0).unwrap_or(false) {
-                // Aggregate tag expected but not received
-                return Err(ClientError::AggTagMismatch);
+            } else {
+                // Aggregate tag expected but not received.
+                // If we have a body (len > 0 aka seq_total > 0), the tag is mandatory in agg_mode.
+                // Since assemble_body succeeded, body_seq_total must be Some.
+                let total = accumulator.body_seq_total.unwrap_or(0);
+                if total > 0 {
+                    return Err(ClientError::AggTagMismatch);
+                }
+                // If total == 0 (empty body), currently no tag is sent with header-only response.
+                // This is compliant with V3 spec for now.
             }
         }
 
