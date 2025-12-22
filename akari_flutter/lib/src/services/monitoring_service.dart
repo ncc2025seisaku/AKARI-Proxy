@@ -37,8 +37,13 @@ class MonitoringService extends ChangeNotifier {
   // Stats
   int _totalBytesSent = 0;
   int _totalBytesReceived = 0;
+  int _totalRequests = 0;
+  int _errorRequests = 0;
   int get totalBytesSent => _totalBytesSent;
   int get totalBytesReceived => _totalBytesReceived;
+  int get totalRequests => _totalRequests;
+  int get errorRequests => _errorRequests;
+  int get successRequests => _totalRequests - _errorRequests;
 
   Timer? _throttleTimer;
 
@@ -47,12 +52,16 @@ class MonitoringService extends ChangeNotifier {
     if (_logs.length > 500) {
       _logs.removeLast();
     }
-    
+
     _totalBytesSent += entry.bytesSent;
     _totalBytesReceived += entry.bytesReceived;
-    
+    _totalRequests++;
+    if (entry.statusCode >= 400 || entry.error != null) {
+      _errorRequests++;
+    }
+
     _logController.add(entry);
-    
+
     // Throttle UI updates to at most 10Hz to prevent main thread blocking
     if (_throttleTimer == null || !_throttleTimer!.isActive) {
       _throttleTimer = Timer(const Duration(milliseconds: 100), () {
