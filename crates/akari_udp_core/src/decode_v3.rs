@@ -8,7 +8,20 @@ use crate::payload::{
 };
 use std::convert::TryInto;
 
-const REQUEST_OVERHEAD: usize = 1 + 2 + 2; // method + url_len + hdr_len
+/// Request payload overhead: method(1) + url_len(2) + hdr_len(2)
+const REQUEST_OVERHEAD: usize = 1 + 2 + 2;
+/// Offset where URL starts in request payload
+const REQUEST_PAYLOAD_OFFSET: usize = 5;
+/// Minimum length for RespHead payload: status_code(2) + body_len(at least 3)
+const RESP_HEAD_MIN_LEN: usize = 4;
+/// Minimum length for RespHeadCont payload: hdr_chunks(1) + hdr_idx(1)
+const RESP_HEAD_CONT_MIN_LEN: usize = 2;
+/// Minimum length for Error payload: code(1) + http_status(2)
+const ERROR_MIN_LEN: usize = 3;
+/// Body length field offset in RespHead (short mode): status_code(2) + body_len(3)
+const RESP_HEAD_OFFSET_SHORT: usize = 5;
+/// Body length field offset in RespHead (full mode): status_code(2) + body_len(4)
+const RESP_HEAD_OFFSET_FULL: usize = 6;
 
 pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, AkariError> {
     if datagram.len() < HeaderV3::FIXED_LEN {
@@ -114,22 +127,22 @@ fn decode_request(payload: &[u8]) -> Result<PayloadV3, AkariError> {
             available: payload.len() - REQUEST_OVERHEAD - hdr_len,
         });
     }
-    let url = std::str::from_utf8(&payload[5..5 + url_len]).map(|s| s.to_string())?;
-    let headers = payload[5 + url_len..].to_vec();
+    let url = std::str::from_utf8(&payload[REQUEST_PAYLOAD_OFFSET..REQUEST_PAYLOAD_OFFSET + url_len]).map(|s| s.to_string())?;
+    let headers = payload[REQUEST_PAYLOAD_OFFSET + url_len..].to_vec();
     Ok(PayloadV3::Request(RequestPayload { method, url, headers }))
 }
 
 fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 4 {
+    if payload.len() < RESP_HEAD_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
     let status_code = u16::from_be_bytes(payload[0..2].try_into().unwrap());
     let (body_len, offset_len) = if header.flags & crate::header_v3::FLAG_SHORT_LEN != 0 {
         let mut buf = [0u8; 4];
-        buf[1..].copy_from_slice(&payload[2..5]); // 3 bytes
-        (u32::from_be_bytes(buf), 5)
+        buf[1..].copy_from_slice(&payload[2..RESP_HEAD_OFFSET_SHORT]); // 3 bytes
+        (u32::from_be_bytes(buf), RESP_HEAD_OFFSET_SHORT)
     } else {
-        (u32::from_be_bytes(payload[2..6].try_into().unwrap()), 6)
+        (u32::from_be_bytes(payload[2..RESP_HEAD_OFFSET_FULL].try_into().unwrap()), RESP_HEAD_OFFSET_FULL)
     };
     if payload.len() < offset_len + 2 {
         return Err(AkariError::MissingPayload);
@@ -148,7 +161,7 @@ fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, Akar
 }
 
 fn decode_resp_head_cont(payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 2 {
+    if payload.len() < RESP_HEAD_CONT_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
     let hdr_chunks = payload[0];
@@ -201,7 +214,7 @@ fn decode_nack(payload: &[u8]) -> Result<NackPayloadV3, AkariError> {
 }
 
 fn decode_error(payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 3 {
+    if payload.len() < ERROR_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
     let code = payload[0];
