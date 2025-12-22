@@ -22,6 +22,16 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
     let header_len = header.encoded_len();
     let encrypt = header.flags & crate::header_v3::FLAG_ENCRYPT != 0;
     let agg_mode = (header.flags & crate::header_v3::FLAG_AGG_TAG != 0) && (header.packet_type == PacketTypeV3::RespBody);
+    
+    // Encryption and aggregate-tag mode are incompatible.
+    // Encryption requires per-packet AEAD authentication, which cannot be aggregated.
+    if encrypt && agg_mode {
+        return Err(AkariError::UnsupportedFlagCombination {
+            flag1: "FLAG_ENCRYPT",
+            flag2: "FLAG_AGG_TAG",
+        });
+    }
+    
     let min_tag = if !encrypt && agg_mode { 0 } else { TAG_LEN };
     if datagram.len() < header_len + min_tag {
         return Err(AkariError::InvalidPacketLength {
