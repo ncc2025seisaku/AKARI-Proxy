@@ -137,9 +137,16 @@ fn decode_request(payload: &[u8]) -> Result<PayloadV3, AkariError> {
 }
 
 fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < RESP_HEAD_MIN_LEN {
+    let required_len = if header.flags & crate::header_v3::FLAG_SHORT_LEN != 0 {
+        RESP_HEAD_OFFSET_SHORT
+    } else {
+        RESP_HEAD_OFFSET_FULL
+    };
+
+    if payload.len() < required_len {
         return Err(AkariError::MissingPayload);
     }
+
     let status_code = u16::from_be_bytes(
         payload[0..2].try_into().expect("length checked")
     );
