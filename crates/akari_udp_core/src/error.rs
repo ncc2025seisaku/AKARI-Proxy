@@ -30,4 +30,6 @@ pub enum AkariError {
     UnsupportedMethod(u8),
     #[error("missing payload data")]
     MissingPayload,
+    #[error("unsupported flag combination: {flag1} and {flag2} cannot be used together")]
+    UnsupportedFlagCombination { flag1: &'static str, flag2: &'static str },
 }
