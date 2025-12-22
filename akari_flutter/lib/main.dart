@@ -1049,31 +1049,35 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                       ),
                       const SizedBox(width: 8),
                       // Connection status indicator
-                      Tooltip(
-                        message: _proxyManager?.isRunning == true
-                            ? 'プロキシ接続中'
-                            : 'プロキシ未接続',
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _proxyManager?.isRunning == true
-                                ? Colors.green
-                                : Colors.red,
-                            boxShadow: [
-                              BoxShadow(
-                                color:
-                                    (_proxyManager?.isRunning == true
-                                            ? Colors.green
-                                            : Colors.red)
-                                        .withOpacity(0.5),
-                                blurRadius: 4,
-                                spreadRadius: 1,
+                      Builder(
+                        builder: (context) {
+                          final isProxyRunning =
+                              _proxyManager?.isRunning == true;
+                          final statusColor = isProxyRunning
+                              ? Colors.green
+                              : Colors.red;
+                          final statusMessage = isProxyRunning
+                              ? 'プロキシ接続中'
+                              : 'プロキシ未接続';
+                          return Tooltip(
+                            message: statusMessage,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: statusColor,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: statusColor.withOpacity(0.5),
+                                    blurRadius: 4,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                          );
+                        },
                       ),
                       const SizedBox(width: 8),
                       // Monitoring toggle
