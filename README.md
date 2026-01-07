@@ -4,6 +4,38 @@
 
 このリポジトリは Rust 製 `akari_udp_core`（ヘッダ/ペイロード/HMACエンコード・デコード）と、その pyo3 バインディング `akari_udp_py`、および Python 側のユーティリティを含んだモノレポ構成です。`uv` + Python 3.11 でビルドされることを前提に、ローカル/外部プロキシの UDP 処理を Rust に閉じ込めた構成です。
 
+**Flutter アプリ** (`akari_flutter/`) も同梱されており、Windows/Android/iOS 向けのクロスプラットフォームクライアントとして利用できます。
+
+## Flutter アプリ（クライアント）
+
+`akari_flutter/` ディレクトリには、AKARI-UDP を使用したセキュアなプロキシクライアントアプリがあります。
+
+### 機能
+
+- 🌐 WebViewブラウザ統合
+- 🔒 AKARI-UDP v3プロトコルによる暗号化通信
+- ⚙️ 設定UI（リモートサーバー、PSK、コンテンツフィルター）
+- 📊 通信状況のモニタリング
+
+### クイックスタート
+
+```bash
+cd akari_flutter
+flutter pub get
+flutter run -d windows  # または android / ios
+```
+
+### ビルド
+
+| プラットフォーム | コマンド | 出力先 |
+|----------------|---------|--------|
+| Windows | `flutter build windows --release` | `build/windows/x64/runner/Release/` |
+| Android | `flutter build apk --release` | `build/app/outputs/flutter-apk/` |
+| iOS | `flutter build ios --release --no-codesign` | `build/ios/iphoneos/` |
+
+詳細は [akari_flutter/README.md](akari_flutter/README.md) を参照してください。
+
+
 ## 開発用環境を整える（他の開発者向け）
 
 1. **uv で Python 3.11 を準備**

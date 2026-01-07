@@ -20,7 +20,6 @@ class AkariSettings {
   final bool enableCss;
   final bool enableImg;
   final bool enableOther;
-  final bool useSystemProxy;
 
   const AkariSettings({
     required this.remoteHost,
@@ -31,20 +30,37 @@ class AkariSettings {
     this.enableCss = true,
     this.enableImg = true,
     this.enableOther = true,
-    this.useSystemProxy = false,
   });
 
   /// Default settings.
   static const defaultSettings = AkariSettings(
     remoteHost: '127.0.0.1',
     remotePort: 9000,
-    psk: [116, 101, 115, 116, 45, 112, 115, 107, 45, 48, 48, 48, 48, 45, 116, 101, 115, 116], // "test-psk-0000-test"
+    psk: [
+      116,
+      101,
+      115,
+      116,
+      45,
+      112,
+      115,
+      107,
+      45,
+      48,
+      48,
+      48,
+      48,
+      45,
+      116,
+      101,
+      115,
+      116,
+    ], // "test-psk-0000-test"
     useEncryption: false,
     enableJs: true,
     enableCss: true,
     enableImg: true,
     enableOther: true,
-    useSystemProxy: false,
   );
 
   /// Create settings from JSON map.
@@ -53,12 +69,12 @@ class AkariSettings {
       remoteHost: json['remoteHost'] as String? ?? defaultSettings.remoteHost,
       remotePort: json['remotePort'] as int? ?? defaultSettings.remotePort,
       psk: (json['psk'] as List<dynamic>?)?.cast<int>() ?? defaultSettings.psk,
-      useEncryption: json['useEncryption'] as bool? ?? defaultSettings.useEncryption,
+      useEncryption:
+          json['useEncryption'] as bool? ?? defaultSettings.useEncryption,
       enableJs: json['enableJs'] as bool? ?? defaultSettings.enableJs,
       enableCss: json['enableCss'] as bool? ?? defaultSettings.enableCss,
       enableImg: json['enableImg'] as bool? ?? defaultSettings.enableImg,
       enableOther: json['enableOther'] as bool? ?? defaultSettings.enableOther,
-      useSystemProxy: json['useSystemProxy'] as bool? ?? defaultSettings.useSystemProxy,
     );
   }
 
@@ -73,7 +89,6 @@ class AkariSettings {
       'enableCss': enableCss,
       'enableImg': enableImg,
       'enableOther': enableOther,
-      'useSystemProxy': useSystemProxy,
     };
   }
 
@@ -87,7 +102,6 @@ class AkariSettings {
     bool? enableCss,
     bool? enableImg,
     bool? enableOther,
-    bool? useSystemProxy,
   }) {
     return AkariSettings(
       remoteHost: remoteHost ?? this.remoteHost,
@@ -98,7 +112,6 @@ class AkariSettings {
       enableCss: enableCss ?? this.enableCss,
       enableImg: enableImg ?? this.enableImg,
       enableOther: enableOther ?? this.enableOther,
-      useSystemProxy: useSystemProxy ?? this.useSystemProxy,
     );
   }
 
@@ -125,7 +138,7 @@ class AkariSettings {
 /// Service for managing persistent settings.
 class SettingsService {
   static const _settingsKey = 'akari_settings';
-  
+
   SharedPreferences? _prefs;
 
   /// Initialize the settings service.
@@ -141,7 +154,7 @@ class SettingsService {
 
     final jsonString = _prefs!.getString(_settingsKey);
     AkariSettings settings;
-    
+
     if (jsonString == null) {
       settings = AkariSettings.defaultSettings;
     } else {
@@ -156,7 +169,7 @@ class SettingsService {
     // Load PSK from secure storage
     const secureStorage = FlutterSecureStorage();
     final securePsk = await secureStorage.read(key: 'akari_psk');
-    
+
     if (securePsk != null) {
       // PSK found in secure storage, use it
       final pskBytes = base64Decode(securePsk);
@@ -169,8 +182,11 @@ class SettingsService {
           if (json.containsKey('psk')) {
             // Migration: Move PSK to secure storage
             final psk = (json['psk'] as List<dynamic>).cast<int>();
-            await secureStorage.write(key: 'akari_psk', value: base64Encode(psk));
-            
+            await secureStorage.write(
+              key: 'akari_psk',
+              value: base64Encode(psk),
+            );
+
             // Re-save without PSK in shared_prefs
             await save(settings.copyWith(psk: psk));
           }
@@ -189,12 +205,15 @@ class SettingsService {
 
     // Save PSK to secure storage
     const secureStorage = FlutterSecureStorage();
-    await secureStorage.write(key: 'akari_psk', value: base64Encode(settings.psk));
+    await secureStorage.write(
+      key: 'akari_psk',
+      value: base64Encode(settings.psk),
+    );
 
     // Create a copy of JSON without PSK for shared_preferences
     final jsonMap = settings.toJson();
     jsonMap.remove('psk');
-    
+
     final jsonString = jsonEncode(jsonMap);
     return _prefs!.setString(_settingsKey, jsonString);
   }

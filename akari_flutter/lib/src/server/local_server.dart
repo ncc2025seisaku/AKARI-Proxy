@@ -278,7 +278,7 @@ class LocalProxyServer {
         headers: {'Content-Type': 'text/plain; charset=utf-8'},
       );
     }
-    return await _proxyRequest(url);
+    return await _proxyRequest(request, url);
   }
 
   Future<Response> _handleProxyPost(Request request) async {
@@ -308,7 +308,7 @@ class LocalProxyServer {
         headers: {'Content-Type': 'text/plain; charset=utf-8'},
       );
     }
-    return await _proxyRequest(url);
+    return await _proxyRequest(request, url);
   }
 
   Future<Response> _handlePathProxy(Request request) async {
@@ -339,20 +339,37 @@ class LocalProxyServer {
       }
     }
 
-    return await _proxyRequest(url);
+    return await _proxyRequest(request, url);
   }
 
-  Future<Response> _proxyRequest(String targetUrl) async {
+  Future<Response> _proxyRequest(Request request, String targetUrl) async {
     try {
       final pool = _clientPool;
       if (pool == null) {
         throw Exception('Client pool not initialized. Call start() first.');
       }
 
+      // Collect headers to forward
+      final forwardHeaders = <(String, String)>[];
+      request.headers.forEach((key, value) {
+        final lowerKey = key.toLowerCase();
+        // Skip headers that wreak havoc or are managed by client/transport
+        if (lowerKey == 'host' ||
+            lowerKey == 'connection' ||
+            lowerKey == 'upgrade' ||
+            lowerKey == 'content-length' ||
+            lowerKey == 'transfer-encoding' ||
+            lowerKey == 'keep-alive') {
+          return;
+        }
+        forwardHeaders.add((key, value));
+      });
+
       // Send request via Rust AkariClientPool (automatically uses available client)
       final requestConfig = defaultRequestConfig();
       final akariResponse = await pool.sendRequest(
         url: targetUrl,
+        headers: forwardHeaders,
         config: requestConfig,
       );
 

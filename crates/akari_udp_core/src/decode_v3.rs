@@ -8,7 +8,18 @@ use crate::payload::{
 };
 use std::convert::TryInto;
 
-const REQUEST_OVERHEAD: usize = 1 + 2 + 2; // method + url_len + hdr_len
+/// Request payload overhead: method(1) + url_len(2) + hdr_len(2)
+const REQUEST_OVERHEAD: usize = 1 + 2 + 2;
+/// Offset where URL starts in request payload
+const REQUEST_PAYLOAD_OFFSET: usize = 5;
+/// Minimum length for RespHeadCont payload: hdr_chunks(1) + hdr_idx(1)
+const RESP_HEAD_CONT_MIN_LEN: usize = 2;
+/// Minimum length for Error payload: code(1) + http_status(2)
+const ERROR_MIN_LEN: usize = 3;
+/// Body length field offset in RespHead (short mode): status_code(2) + body_len(3)
+const RESP_HEAD_OFFSET_SHORT: usize = 5;
+/// Body length field offset in RespHead (full mode): status_code(2) + body_len(4)
+const RESP_HEAD_OFFSET_FULL: usize = 6;
 
 pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, AkariError> {
     if datagram.len() < HeaderV3::FIXED_LEN {
@@ -22,6 +33,16 @@ pub fn decode_packet_v3(datagram: &[u8], psk: &[u8]) -> Result<ParsedPacketV3, A
     let header_len = header.encoded_len();
     let encrypt = header.flags & crate::header_v3::FLAG_ENCRYPT != 0;
     let agg_mode = (header.flags & crate::header_v3::FLAG_AGG_TAG != 0) && (header.packet_type == PacketTypeV3::RespBody);
+    
+    // Encryption and aggregate-tag mode are incompatible.
+    // Encryption requires per-packet AEAD authentication, which cannot be aggregated.
+    if encrypt && agg_mode {
+        return Err(AkariError::UnsupportedFlagCombination {
+            flag1: "FLAG_ENCRYPT",
+            flag2: "FLAG_AGG_TAG",
+        });
+    }
+    
     let min_tag = if !encrypt && agg_mode { 0 } else { TAG_LEN };
     if datagram.len() < header_len + min_tag {
         return Err(AkariError::InvalidPacketLength {
@@ -96,30 +117,45 @@ fn decode_request(payload: &[u8]) -> Result<PayloadV3, AkariError> {
         return Err(AkariError::MissingPayload);
     }
     let method = parse_method(payload[0])?;
-    let url_len = u16::from_be_bytes(payload[1..3].try_into().unwrap()) as usize;
-    let hdr_len = u16::from_be_bytes(payload[3..5].try_into().unwrap()) as usize;
+    let url_len = u16::from_be_bytes(
+        payload[1..3].try_into().expect("length checked")
+    ) as usize;
+    let hdr_len = u16::from_be_bytes(
+        payload[3..5].try_into().expect("length checked")
+    ) as usize;
     if payload.len() != REQUEST_OVERHEAD + url_len + hdr_len {
         return Err(AkariError::InvalidUrlLength {
             declared: url_len,
             available: payload.len() - REQUEST_OVERHEAD - hdr_len,
         });
     }
-    let url = std::str::from_utf8(&payload[5..5 + url_len]).map(|s| s.to_string())?;
-    let headers = payload[5 + url_len..].to_vec();
+    let url = std::str::from_utf8(&payload[REQUEST_PAYLOAD_OFFSET..REQUEST_PAYLOAD_OFFSET + url_len]).map(|s| s.to_string())?;
+    let headers = payload[REQUEST_PAYLOAD_OFFSET + url_len..].to_vec();
     Ok(PayloadV3::Request(RequestPayload { method, url, headers }))
 }
 
 fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 4 {
+    let required_len = if header.flags & crate::header_v3::FLAG_SHORT_LEN != 0 {
+        RESP_HEAD_OFFSET_SHORT
+    } else {
+        RESP_HEAD_OFFSET_FULL
+    };
+
+    if payload.len() < required_len {
         return Err(AkariError::MissingPayload);
     }
-    let status_code = u16::from_be_bytes(payload[0..2].try_into().unwrap());
+
+    let status_code = u16::from_be_bytes(
+        payload[0..2].try_into().expect("length checked")
+    );
     let (body_len, offset_len) = if header.flags & crate::header_v3::FLAG_SHORT_LEN != 0 {
         let mut buf = [0u8; 4];
-        buf[1..].copy_from_slice(&payload[2..5]); // 3 bytes
-        (u32::from_be_bytes(buf), 5)
+        buf[1..].copy_from_slice(&payload[2..RESP_HEAD_OFFSET_SHORT]); // 3 bytes
+        (u32::from_be_bytes(buf), RESP_HEAD_OFFSET_SHORT)
     } else {
-        (u32::from_be_bytes(payload[2..6].try_into().unwrap()), 6)
+        (u32::from_be_bytes(
+            payload[2..RESP_HEAD_OFFSET_FULL].try_into().expect("length checked")
+        ), RESP_HEAD_OFFSET_FULL)
     };
     if payload.len() < offset_len + 2 {
         return Err(AkariError::MissingPayload);
@@ -138,7 +174,7 @@ fn decode_resp_head(header: &HeaderV3, payload: &[u8]) -> Result<PayloadV3, Akar
 }
 
 fn decode_resp_head_cont(payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 2 {
+    if payload.len() < RESP_HEAD_CONT_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
     let hdr_chunks = payload[0];
@@ -191,11 +227,13 @@ fn decode_nack(payload: &[u8]) -> Result<NackPayloadV3, AkariError> {
 }
 
 fn decode_error(payload: &[u8]) -> Result<PayloadV3, AkariError> {
-    if payload.len() < 3 {
+    if payload.len() < ERROR_MIN_LEN {
         return Err(AkariError::MissingPayload);
     }
     let code = payload[0];
-    let http_status = u16::from_be_bytes(payload[1..3].try_into().unwrap());
+    let http_status = u16::from_be_bytes(
+        payload[1..3].try_into().expect("length checked")
+    );
     let message = std::str::from_utf8(&payload[3..]).map(|s| s.to_string())?;
     Ok(PayloadV3::Error(ErrorPayload {
         error_code: code,

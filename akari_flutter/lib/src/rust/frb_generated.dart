@@ -96,6 +96,7 @@ abstract class RustLibApi extends BaseApi {
   Future<AkariHttpResponse> crateApiAkariClientAkariClientPoolSendRequest({
     required AkariClientPool that,
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -104,6 +105,7 @@ abstract class RustLibApi extends BaseApi {
     required AkariClientPool that,
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -116,6 +118,7 @@ abstract class RustLibApi extends BaseApi {
   Future<AkariHttpResponse> crateApiAkariClientAkariClientSendRequest({
     required AkariClient that,
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -124,6 +127,7 @@ abstract class RustLibApi extends BaseApi {
     required AkariClient that,
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -267,6 +271,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<AkariHttpResponse> crateApiAkariClientAkariClientPoolSendRequest({
     required AkariClientPool that,
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) {
     return handler.executeNormal(
@@ -278,6 +283,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_String(url, serializer);
+          sse_encode_list_record_string_string(headers, serializer);
           sse_encode_box_autoadd_akari_request_config(config, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -291,7 +297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiAkariClientAkariClientPoolSendRequestConstMeta,
-        argValues: [that, url, config],
+        argValues: [that, url, headers, config],
         apiImpl: this,
       ),
     );
@@ -300,7 +306,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiAkariClientAkariClientPoolSendRequestConstMeta =>
       const TaskConstMeta(
         debugName: "AkariClientPool_send_request",
-        argNames: ["that", "url", "config"],
+        argNames: ["that", "url", "headers", "config"],
       );
 
   @override
@@ -309,6 +315,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required AkariClientPool that,
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) {
     return handler.executeNormal(
@@ -321,6 +328,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(url, serializer);
           sse_encode_String(method, serializer);
+          sse_encode_list_record_string_string(headers, serializer);
           sse_encode_box_autoadd_akari_request_config(config, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -335,7 +343,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         ),
         constMeta:
             kCrateApiAkariClientAkariClientPoolSendRequestWithMethodConstMeta,
-        argValues: [that, url, method, config],
+        argValues: [that, url, method, headers, config],
         apiImpl: this,
       ),
     );
@@ -345,7 +353,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiAkariClientAkariClientPoolSendRequestWithMethodConstMeta =>
       const TaskConstMeta(
         debugName: "AkariClientPool_send_request_with_method",
-        argNames: ["that", "url", "method", "config"],
+        argNames: ["that", "url", "method", "headers", "config"],
       );
 
   @override
@@ -390,6 +398,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<AkariHttpResponse> crateApiAkariClientAkariClientSendRequest({
     required AkariClient that,
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) {
     return handler.executeNormal(
@@ -401,6 +410,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_String(url, serializer);
+          sse_encode_list_record_string_string(headers, serializer);
           sse_encode_box_autoadd_akari_request_config(config, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -414,7 +424,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiAkariClientAkariClientSendRequestConstMeta,
-        argValues: [that, url, config],
+        argValues: [that, url, headers, config],
         apiImpl: this,
       ),
     );
@@ -423,7 +433,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiAkariClientAkariClientSendRequestConstMeta =>
       const TaskConstMeta(
         debugName: "AkariClient_send_request",
-        argNames: ["that", "url", "config"],
+        argNames: ["that", "url", "headers", "config"],
       );
 
   @override
@@ -432,6 +442,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required AkariClient that,
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) {
     return handler.executeNormal(
@@ -444,6 +455,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(url, serializer);
           sse_encode_String(method, serializer);
+          sse_encode_list_record_string_string(headers, serializer);
           sse_encode_box_autoadd_akari_request_config(config, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -458,7 +470,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         ),
         constMeta:
             kCrateApiAkariClientAkariClientSendRequestWithMethodConstMeta,
-        argValues: [that, url, method, config],
+        argValues: [that, url, method, headers, config],
         apiImpl: this,
       ),
     );
@@ -468,7 +480,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiAkariClientAkariClientSendRequestWithMethodConstMeta =>
       const TaskConstMeta(
         debugName: "AkariClient_send_request_with_method",
-        argNames: ["that", "url", "method", "config"],
+        argNames: ["that", "url", "method", "headers", "config"],
       );
 
   @override
@@ -1290,10 +1302,12 @@ class AkariClientImpl extends RustOpaque implements AkariClient {
   /// Send an HTTP GET request and return the response.
   Future<AkariHttpResponse> sendRequest({
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) => RustLib.instance.api.crateApiAkariClientAkariClientSendRequest(
     that: this,
     url: url,
+    headers: headers,
     config: config,
   );
 
@@ -1301,12 +1315,14 @@ class AkariClientImpl extends RustOpaque implements AkariClient {
   Future<AkariHttpResponse> sendRequestWithMethod({
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) =>
       RustLib.instance.api.crateApiAkariClientAkariClientSendRequestWithMethod(
         that: this,
         url: url,
         method: method,
+        headers: headers,
         config: config,
       );
 }
@@ -1344,10 +1360,12 @@ class AkariClientPoolImpl extends RustOpaque implements AkariClientPool {
   /// and releases the client back to the pool.
   Future<AkariHttpResponse> sendRequest({
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) => RustLib.instance.api.crateApiAkariClientAkariClientPoolSendRequest(
     that: this,
     url: url,
+    headers: headers,
     config: config,
   );
 
@@ -1355,12 +1373,14 @@ class AkariClientPoolImpl extends RustOpaque implements AkariClientPool {
   Future<AkariHttpResponse> sendRequestWithMethod({
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   }) => RustLib.instance.api
       .crateApiAkariClientAkariClientPoolSendRequestWithMethod(
         that: this,
         url: url,
         method: method,
+        headers: headers,
         config: config,
       );
 }

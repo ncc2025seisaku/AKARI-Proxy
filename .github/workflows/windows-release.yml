@@ -62,13 +62,43 @@ jobs:
         working-directory: akari_flutter
         run: flutter build windows --release
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          pip install pyinstaller maturin
+          pip install .
+
+      - name: Build Python Backend
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --distpath release/backend --name akari_backend --onedir --contents-directory . scripts/run_async_remote_proxy.py
+
       - name: Create ZIP archive
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
-          $buildDir = "akari_flutter/build/windows/x64/runner/Release"
+          $flutterBuildDir = "akari_flutter/build/windows/x64/runner/Release"
+          $pythonBuildDir = "release/backend/akari_backend"
           $zipName = "akari-proxy-windows-$version.zip"
-          Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
+          
+          # Create strict release structure
+          $releaseRoot = "release_package"
+          New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
+          
+          # Copy Flutter artifacts to root
+          Copy-Item -Recurse "$flutterBuildDir/*" $releaseRoot
+          
+          # Copy Python artifacts to backend folder
+          $backendDest = "$releaseRoot/backend"
+          New-Item -ItemType Directory -Force -Path $backendDest | Out-Null
+          Copy-Item -Recurse "$pythonBuildDir/*" $backendDest
+          
+          Compress-Archive -Path "$releaseRoot/*" -DestinationPath $zipName
           echo "ZIP_NAME=$zipName" >> $env:GITHUB_OUTPUT
 
       - name: Upload artifact

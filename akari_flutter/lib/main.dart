@@ -11,7 +11,6 @@ import 'package:akari_flutter/src/rust/frb_generated.dart';
 import 'package:akari_flutter/src/server/local_server.dart';
 import 'package:akari_flutter/src/server/monitoring_view.dart';
 import 'package:akari_flutter/src/services/settings_service.dart';
-import 'package:akari_flutter/src/services/system_proxy_service.dart';
 
 /// Global settings service
 final SettingsService _settingsService = SettingsService();
@@ -68,9 +67,6 @@ class ProxyManager extends ChangeNotifier {
     if (_isRunning) return;
 
     await _startServer();
-    if (_settings.useSystemProxy) {
-      await WindowsSystemProxy.enable('127.0.0.1:8080');
-    }
     _startWatchdog();
     _isRunning = true;
     notifyListeners();
@@ -78,9 +74,6 @@ class ProxyManager extends ChangeNotifier {
 
   Future<void> stop() async {
     _watchdogTimer?.cancel();
-    if (_settings.useSystemProxy) {
-      await WindowsSystemProxy.disable();
-    }
     _isRunning = false;
     await _server?.stop();
     _server = null;
@@ -92,15 +85,6 @@ class ProxyManager extends ChangeNotifier {
     _settings = newSettings;
 
     if (_isRunning) {
-      // If system proxy setting changed, apply it immediately
-      if (oldSettings.useSystemProxy != newSettings.useSystemProxy) {
-        if (newSettings.useSystemProxy) {
-          await WindowsSystemProxy.enable('127.0.0.1:8080');
-        } else {
-          await WindowsSystemProxy.disable();
-        }
-      }
-
       // If core proxy settings changed, restart server
       if (oldSettings.remoteHost != newSettings.remoteHost ||
           oldSettings.remotePort != newSettings.remotePort ||
@@ -235,6 +219,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   bool _isWebViewReady = false;
   String _currentUrl = '';
   bool _isLoading = false;
+  double _loadingProgress = 0.0;
   bool _settingsOpen = false;
   bool _monitoringOpen = false;
 
@@ -244,6 +229,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
   late TextEditingController _remotePortController;
   late TextEditingController _pskController;
   bool _isReconnecting = false;
+  bool _pskObscured = true;
 
   @override
   void initState() {
@@ -313,7 +299,9 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
       ..setNavigationDelegate(
         wf.NavigationDelegate(
           onProgress: (int progress) {
-            // Update loading bar.
+            setState(() {
+              _loadingProgress = progress / 100.0;
+            });
           },
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
@@ -519,6 +507,69 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
     }
   }
 
+  /// Test connection to the proxy server without saving settings.
+  Future<void> _testConnection() async {
+    final host = _remoteHostController.text.trim();
+    final port = int.tryParse(_remotePortController.text.trim()) ?? 9000;
+
+    if (host.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('リモートホストを入力してください'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isReconnecting = true;
+    });
+
+    try {
+      // Try to establish a simple connection to the host
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
+      await socket.close();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✓ $host:$port への接続に成功しました'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } on SocketException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✗ 接続失敗: ${e.message}'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✗ 接続エラー: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isReconnecting = false;
+        });
+      }
+    }
+  }
+
   /// Toggle a filter setting and save.
   void _toggleFilter(String key, bool value) {
     setState(() {
@@ -537,9 +588,6 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
           break;
         case 'useEncryption':
           _settings = _settings.copyWith(useEncryption: value);
-          break;
-        case 'useSystemProxy':
-          _settings = _settings.copyWith(useSystemProxy: value);
           break;
       }
     });
@@ -692,12 +740,64 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     keyboardType: TextInputType.number,
                   ),
                   const SizedBox(height: 12),
-                  // PSK input
-                  _buildInputField(
-                    controller: _pskController,
-                    label: 'PSK (事前共有鍵)',
-                    hint: 'test-psk-0000-test',
-                    icon: Icons.key,
+                  // PSK input with visibility toggle
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'PSK (事前共有鍵)',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.15),
+                          ),
+                        ),
+                        child: TextField(
+                          controller: _pskController,
+                          obscureText: _pskObscured,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'test-psk-0000-test',
+                            hintStyle: TextStyle(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            prefixIcon: Icon(
+                              Icons.key,
+                              color: Colors.white.withOpacity(0.5),
+                              size: 20,
+                            ),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _pskObscured
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                                color: Colors.white.withOpacity(0.5),
+                                size: 20,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _pskObscured = !_pskObscured;
+                                });
+                              },
+                              tooltip: _pskObscured ? 'パスワードを表示' : 'パスワードを隠す',
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   // Connection status
@@ -745,36 +845,59 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // Save button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isReconnecting ? null : _saveAndReconnect,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF3C45C),
-                        foregroundColor: const Color(0xFF0A0A0A),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  // Action buttons row
+                  Row(
+                    children: [
+                      // Test connection button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _isReconnecting ? null : _testConnection,
+                          icon: const Icon(Icons.cable, size: 18),
+                          label: const Text('接続テスト'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: BorderSide(
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
                       ),
-                      child: _isReconnecting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF0A0A0A),
-                              ),
-                            )
-                          : const Text(
-                              '保存して再接続',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
+                      const SizedBox(width: 12),
+                      // Save button
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _isReconnecting ? null : _saveAndReconnect,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF3C45C),
+                            foregroundColor: const Color(0xFF0A0A0A),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                    ),
+                          ),
+                          child: _isReconnecting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF0A0A0A),
+                                  ),
+                                )
+                              : const Text(
+                                  '保存',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 28),
                   // Divider
@@ -840,14 +963,6 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                     accentColor: const Color(0xFF4FC3F7),
                   ),
                   const SizedBox(height: 8),
-                  if (Platform.isWindows)
-                    _buildToggleSwitch(
-                      label: 'システムプロキシ',
-                      description: 'OS のプロキシ設定を自動更新',
-                      value: _settings.useSystemProxy,
-                      onChanged: (v) => _toggleFilter('useSystemProxy', v),
-                      accentColor: const Color(0xFFA5D6A7),
-                    ),
                 ],
               ),
             ),
@@ -1011,13 +1126,13 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                         icon: const Icon(Icons.arrow_back, size: 20),
                         color: Colors.white70,
                         onPressed: _goBack,
-                        tooltip: '戻る',
+                        tooltip: '戻る (Alt+←)',
                       ),
                       IconButton(
                         icon: const Icon(Icons.arrow_forward, size: 20),
                         color: Colors.white70,
                         onPressed: _goForward,
-                        tooltip: '進む',
+                        tooltip: '進む (Alt+→)',
                       ),
                       IconButton(
                         icon: Icon(
@@ -1026,7 +1141,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                         ),
                         color: Colors.white70,
                         onPressed: _reload,
-                        tooltip: _isLoading ? '中止' : '再読み込み',
+                        tooltip: _isLoading ? '中止 (Esc)' : '再読み込み (F5)',
                       ),
                       IconButton(
                         icon: const Icon(Icons.home, size: 20),
@@ -1053,7 +1168,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                               fontSize: 14,
                             ),
                             decoration: InputDecoration(
-                              hintText: 'URL を入力...',
+                              hintText: 'https://example.com',
                               hintStyle: TextStyle(
                                 color: Colors.white.withOpacity(0.5),
                                 fontSize: 14,
@@ -1070,6 +1185,38 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
                             },
                           ),
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Connection status indicator
+                      Builder(
+                        builder: (context) {
+                          final isProxyRunning =
+                              _proxyManager?.isRunning == true;
+                          final statusColor = isProxyRunning
+                              ? Colors.green
+                              : Colors.red;
+                          final statusMessage = isProxyRunning
+                              ? 'プロキシ接続中'
+                              : 'プロキシ未接続';
+                          return Tooltip(
+                            message: statusMessage,
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: statusColor,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: statusColor.withOpacity(0.5),
+                                    blurRadius: 4,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
                       const SizedBox(width: 8),
                       // Monitoring toggle
@@ -1104,6 +1251,7 @@ class _ProxyHomePageState extends State<ProxyHomePage> {
               // Loading indicator
               if (_isLoading)
                 LinearProgressIndicator(
+                  value: Platform.isAndroid ? _loadingProgress : null,
                   backgroundColor: Colors.transparent,
                   valueColor: const AlwaysStoppedAnimation<Color>(
                     Color(0xFFF3C45C),

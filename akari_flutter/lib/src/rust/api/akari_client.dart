@@ -32,6 +32,7 @@ abstract class AkariClient implements RustOpaqueInterface {
   /// Send an HTTP GET request and return the response.
   Future<AkariHttpResponse> sendRequest({
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -39,6 +40,7 @@ abstract class AkariClient implements RustOpaqueInterface {
   Future<AkariHttpResponse> sendRequestWithMethod({
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 }
@@ -76,6 +78,7 @@ abstract class AkariClientPool implements RustOpaqueInterface {
   /// and releases the client back to the pool.
   Future<AkariHttpResponse> sendRequest({
     required String url,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 
@@ -83,6 +86,7 @@ abstract class AkariClientPool implements RustOpaqueInterface {
   Future<AkariHttpResponse> sendRequestWithMethod({
     required String url,
     required String method,
+    required List<(String, String)> headers,
     required AkariRequestConfig config,
   });
 }

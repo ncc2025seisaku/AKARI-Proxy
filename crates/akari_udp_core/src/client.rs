@@ -309,6 +309,24 @@ fn decode_header_block(block: &[u8]) -> Vec<(String, String)> {
     headers
 }
 
+/// Encode key-value pairs into header block.
+fn encode_header_block(headers: &[(String, String)]) -> Vec<u8> {
+    let mut block = Vec::new();
+    for (name, value) in headers {
+        // Force literal encoding for simplicity
+        block.push(0x00); // Literal
+        let name_bytes = name.as_bytes();
+        block.push(name_bytes.len() as u8);
+        block.extend_from_slice(name_bytes);
+        
+        let value_bytes = value.as_bytes();
+        let val_len = value_bytes.len() as u16;
+        block.extend_from_slice(&val_len.to_be_bytes());
+        block.extend_from_slice(value_bytes);
+    }
+    block
+}
+
 /// Build a bitmap from a list of missing sequence numbers.
 fn build_missing_bitmap(missing: &[u16]) -> Vec<u8> {
     if missing.is_empty() {
@@ -375,7 +393,7 @@ impl AkariClient {
         &self,
         url: &str,
         method: &str,
-        _body: &[u8], // Currently unused, GET only
+        headers: &[(String, String)],
         message_id: u64,
         timestamp: u32,
         config: &RequestConfig,
@@ -397,8 +415,11 @@ impl AkariClient {
             _ => return Err(ClientError::Protocol(format!("Unsupported method: {}", method))),
         };
 
+        // Encode headers
+        let header_block = encode_header_block(headers);
+
         // Encode request
-        let datagram = encode_request_v3(req_method, url, &[], message_id, timestamp, flags, &self.psk)
+        let datagram = encode_request_v3(req_method, url, &header_block, message_id, timestamp, flags, &self.psk)
             .map_err(|e| ClientError::Protocol(format!("Encode error: {:?}", e)))?;
 
         // Set socket timeout
@@ -603,9 +624,16 @@ impl AkariClient {
                 if received_tag.as_slice() != expected_tag {
                     return Err(ClientError::AggTagMismatch);
                 }
-            } else if accumulator.body_seq_total.map(|t| t > 0).unwrap_or(false) {
-                // Aggregate tag expected but not received
-                return Err(ClientError::AggTagMismatch);
+            } else {
+                // Aggregate tag expected but not received.
+                // If we have a body (len > 0 aka seq_total > 0), the tag is mandatory in agg_mode.
+                // Since assemble_body succeeded, body_seq_total must be Some.
+                let total = accumulator.body_seq_total.unwrap_or(0);
+                if total > 0 {
+                    return Err(ClientError::AggTagMismatch);
+                }
+                // If total == 0 (empty body), currently no tag is sent with header-only response.
+                // This is compliant with V3 spec for now.
             }
         }
 
