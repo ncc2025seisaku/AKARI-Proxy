@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import logging
-import time
-import threading
-import hmac
+import asyncio
 import hashlib
+import hmac
+import logging
+import threading
+import time
 from typing import Iterable, Sequence
+from urllib.parse import parse_qs, urlparse
 
 from akari_udp_py import (
     encode_error_py,
@@ -15,10 +17,10 @@ from akari_udp_py import (
     encode_error_v3_py,
     encode_nack_body_v3_py,
     encode_nack_head_v3_py,
+    encode_resp_body_v3_agg_py,
     encode_resp_body_v3_py,
     encode_resp_head_cont_v3_py,
     encode_resp_head_v3_py,
-    encode_resp_body_v3_agg_py,
     encode_response_chunk_py,
     encode_response_chunk_v2_py,
     encode_response_first_chunk_py,
@@ -35,6 +37,7 @@ from .http_client import (
     fetch,
     fetch_async,
 )
+from .search import SearchError, SearchParseError, search_to_json
 
 LOGGER = logging.getLogger(__name__)
 
@@ -885,6 +888,10 @@ async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
         LOGGER.info("serve cached response message_id=%s url=%s", request.header.get("message_id"), normalized_url)
         return _encode_success_datagrams(request, cached_response)
 
+    # akari://search プロトコルの処理
+    if normalized_url.startswith("akari://search"):
+        return await _handle_search_async(request, normalized_url)
+
     try:
         response = await _fetch_async_func(normalized_url)
     except InvalidURLError as exc:
@@ -932,3 +939,85 @@ async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
     )
     _maybe_store_http_cache(normalized_url, response, now=time.time())
     return _encode_success_datagrams(request, response)
+
+
+async def _handle_search_async(request: IncomingRequest, url: str) -> Sequence[bytes]:
+    """akari://search?q=xxx リクエストを処理して検索結果JSONを返す."""
+    # クエリパラメータを抽出
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    query = params.get("q", [""])[0]
+
+    if not query:
+        return _encode_error(
+            request,
+            error_code=ERROR_INVALID_URL,
+            http_status=400,
+            message="search query 'q' is required",
+        )
+
+    # クエリ長の検証（200文字制限）
+    if len(query) > 200:
+        return _encode_error(
+            request,
+            error_code=ERROR_INVALID_URL,
+            http_status=400,
+            message="search query too long (max 200 chars)",
+        )
+
+    LOGGER.info("handling search request message_id=%s query=%s", request.header.get("message_id"), query)
+
+    try:
+        # スレッドプールで同期関数を実行（イベントループをブロックしない）
+        body = await asyncio.to_thread(search_to_json, query, timeout=8.0)
+
+        response: HttpResponse = {
+            "status_code": 200,
+            "headers": {
+                "Content-Type": "application/json; charset=utf-8",
+                "Cache-Control": "no-cache",
+            },
+            "body": body,
+        }
+
+        LOGGER.info(
+            "success search message_id=%s query=%s body_len=%d",
+            request.header.get("message_id"),
+            query,
+            len(body),
+        )
+        return _encode_success_datagrams(request, response)
+
+    except TimeoutFetchError as exc:
+        LOGGER.warning("search timeout query=%s: %s", query, exc)
+        return _encode_error(
+            request,
+            error_code=ERROR_TIMEOUT,
+            http_status=504,
+            message=f"search timeout: {exc}",
+        )
+    except SearchParseError as exc:
+        LOGGER.warning("search parse error query=%s: %s", query, exc)
+        return _encode_error(
+            request,
+            error_code=ERROR_UPSTREAM_FAILURE,
+            http_status=502,
+            message=f"search parse error: {exc}",
+        )
+    except SearchError as exc:
+        LOGGER.warning("search error query=%s: %s", query, exc)
+        return _encode_error(
+            request,
+            error_code=ERROR_UPSTREAM_FAILURE,
+            http_status=502,
+            message=f"search error: {exc}",
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("search failed query=%s", query)
+        return _encode_error(
+            request,
+            error_code=ERROR_UNEXPECTED,
+            http_status=500,
+            message="search failed",
+        )
+
