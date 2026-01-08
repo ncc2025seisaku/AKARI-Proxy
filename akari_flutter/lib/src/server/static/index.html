@@ -33,6 +33,11 @@
       background: #0a0a0a;
     }
 
+    body.showing-results {
+      overflow-y: auto;
+      align-items: flex-start;
+    }
+
     body::before {
       content: "";
       position: fixed;
@@ -455,13 +460,6 @@
 
     const searchResultsEl = document.getElementById('searchResults');
 
-    const escapeHtml = (text) => {
-      if (text == null) return '';
-      const div = document.createElement('div');
-      div.textContent = String(text);
-      return div.innerHTML;
-    };
-
     // URLが安全かどうか検証（https/http のみ許可）
     const isValidUrl = (url) => {
       if (!url || typeof url !== 'string') return false;
@@ -553,12 +551,14 @@
 
       searchResultsEl.classList.add('active');
       document.querySelector('main').style.display = 'none';
+      document.body.classList.add('showing-results');
     };
 
     const hideSearchResults = () => {
       searchResultsEl.classList.remove('active');
       searchResultsEl.innerHTML = '';
       document.querySelector('main').style.display = 'flex';
+      document.body.classList.remove('showing-results');
       queryInput.value = '';
       queryInput.focus();
     };
@@ -598,6 +598,8 @@
             errorDiv.textContent = '検索に失敗しました。しばらくしてから再度お試しください。';
             searchResultsEl.appendChild(errorDiv);
             searchResultsEl.classList.add('active');
+            document.querySelector('main').style.display = 'none';
+            document.body.classList.add('showing-results');
           })
           .finally(() => {
             searchButton.classList.remove('loading');
@@ -606,9 +608,18 @@
           });
       } else {
         // URLの場合 - ページ遷移
-        const params = new URLSearchParams();
-        params.set("entry", "1");
-        window.location.href = `/${encodeURIComponent(result.value)}?${params.toString()}`;
+        try {
+          const params = new URLSearchParams();
+          params.set("entry", "1");
+          window.location.href = `/${encodeURIComponent(result.value)}?${params.toString()}`;
+        } catch (err) {
+          console.error('Navigation failed:', err);
+          // エラー時はUIを元に戻す
+          searchButton.classList.remove('loading');
+          searchButton.disabled = false;
+          queryInput.disabled = false;
+          alert('ページ遷移に失敗しました。URLを確認してください。');
+        }
       }
     };
 
