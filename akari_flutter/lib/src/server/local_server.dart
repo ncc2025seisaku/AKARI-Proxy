@@ -81,6 +81,9 @@ class LocalProxyServer {
     _router.post('/proxy', _handleProxyPost);
     _router.post('/api/proxy', _handleProxyPost);
 
+    // Search endpoint
+    _router.get('/search', _handleSearch);
+
     // Path-based proxy (catch-all for /{encoded-url})
     _router.get('/<url|.+>', _handlePathProxy);
   }
@@ -309,6 +312,35 @@ class LocalProxyServer {
       );
     }
     return await _proxyRequest(request, url);
+  }
+
+  /// 検索クエリの最大長
+  static const int _maxQueryLength = 200;
+
+  /// Handle GET /search - proxy search via AKARI search protocol
+  Future<Response> _handleSearch(Request request) async {
+    final query = request.url.queryParameters['q'];
+    if (query == null || query.isEmpty) {
+      return Response(
+        400,
+        body: 'Missing query parameter: q',
+        headers: {'Content-Type': 'text/plain; charset=utf-8'},
+      );
+    }
+
+    // クエリ長の検証
+    if (query.length > _maxQueryLength) {
+      return Response(
+        400,
+        body: 'Query too long (max $_maxQueryLength characters)',
+        headers: {'Content-Type': 'text/plain; charset=utf-8'},
+      );
+    }
+
+    // akari://search プロトコルでリモートプロキシに検索を依頼
+    // リモートがDuckDuckGoをスクレイピングしてAKARI風HTMLを生成
+    final searchUrl = 'akari://search?q=${Uri.encodeComponent(query)}';
+    return await _proxyRequest(request, searchUrl);
   }
 
   Future<Response> _handlePathProxy(Request request) async {
