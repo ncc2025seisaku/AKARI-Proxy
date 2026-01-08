@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import logging
-import time
-import threading
-import hmac
+import asyncio
 import hashlib
+import hmac
+import logging
+import threading
+import time
 from typing import Iterable, Sequence
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from akari_udp_py import (
     encode_error_py,
@@ -16,10 +17,10 @@ from akari_udp_py import (
     encode_error_v3_py,
     encode_nack_body_v3_py,
     encode_nack_head_v3_py,
+    encode_resp_body_v3_agg_py,
     encode_resp_body_v3_py,
     encode_resp_head_cont_v3_py,
     encode_resp_head_v3_py,
-    encode_resp_body_v3_agg_py,
     encode_response_chunk_py,
     encode_response_chunk_v2_py,
     encode_response_first_chunk_py,
@@ -36,6 +37,7 @@ from .http_client import (
     fetch,
     fetch_async,
 )
+from .search import SearchError, SearchParseError, search_to_json
 
 LOGGER = logging.getLogger(__name__)
 
@@ -941,9 +943,6 @@ async def handle_request_async(request: IncomingRequest) -> Sequence[bytes]:
 
 async def _handle_search_async(request: IncomingRequest, url: str) -> Sequence[bytes]:
     """akari://search?q=xxx リクエストを処理して検索結果JSONを返す."""
-    import asyncio
-    from .search import search_to_json, SearchError, SearchParseError
-
     # クエリパラメータを抽出
     parsed = urlparse(url)
     params = parse_qs(parsed.query)
